@@ -11,6 +11,11 @@ import urllib3
 import random
 from supabase import create_client, Client
 
+# --- DEFINE PAGE NAMES GLOBALLY TO PREVENT EMOJI MISMATCHES ---
+VIEW_COACH = "⏱ Coach Race Info"
+VIEW_WALL = "📋 Swimmer Wall Planner"
+VIEW_TM = "🚩 TM Marshalling Info"
+
 # Streamlit Page Setup
 st.set_page_config(page_title="Swim Gala Hub", layout="wide")
 
@@ -104,11 +109,11 @@ if "room_pin" not in st.session_state:
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-page_selection = st.sidebar.radio("Select View", ["⏱️️ Coach Race Info", "📋 Swimmer Wall Planner", "🚩 TM Marshalling Info"])
+page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM])
 
 # --- DYNAMIC HEADER INJECTION ---
-if page_selection == "⏱️ Coach Race Info": banner_title = "🏊‍♂ COACH'S CLIPBOARD"
-elif page_selection == "📋 Swimmer Wall Planner": banner_title = "📋 SWIMMER WALL PLANNER"
+if page_selection == VIEW_COACH: banner_title = "🏊‍♂ COACH'S CLIPBOARD"
+elif page_selection == VIEW_WALL: banner_title = "📋 SWIMMER WALL PLANNER"
 else: banner_title = "🚩 TEAM MANAGER TRACKER"
 
 pin_display = f"<div style='color: #4ade80; font-size: 0.85em; margin-top: 4px;'>🟢 Live Room: {st.session_state['room_pin']}</div>" if st.session_state["room_pin"] else "<div style='color: #ccc; font-size: 0.85em; margin-top: 4px;'>Offline Mode</div>"
@@ -506,7 +511,7 @@ else:
 
 
 # --- VIEW 1: COACH RACE INFO ---
-if page_selection == "⏱️ Coach Race Info":
+if page_selection == VIEW_COACH:
     
     if not df_final.empty:
         recorded_swims = df_final[df_final["Achieved Time"] != ""]
@@ -577,7 +582,7 @@ if page_selection == "⏱️ Coach Race Info":
     else: st.info("👈 **Please load your gala meet data** from the sidebar first.")
 
 # --- VIEW 2: SWIMMER WALL PLANNER ---
-elif page_selection == "📋 Swimmer Wall Planner":
+elif page_selection == VIEW_WALL:
     if not df_final.empty:
         sorted_df = df_final.sort_values(by=["Swimmer", "Session", "Event"])
         current_swimmer = None
@@ -594,7 +599,7 @@ elif page_selection == "📋 Swimmer Wall Planner":
     else: st.info("👈 **Please load your gala meet data** from the sidebar first.")
 
 # --- VIEW 3: TM MARSHALLING INFO ---
-elif page_selection == "🚩 TM Marshalling Info":
+elif page_selection == VIEW_TM:
     st.markdown("Track swimmer movement split by **Session**. All swimmers in an event see **Coach** at event call time (-20 mins); **Marshalling** is calculated per individual **Heat** (-10 mins).")
     
     if not df_final.empty:
