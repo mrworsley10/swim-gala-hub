@@ -130,32 +130,50 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
+# --- DATA SANITIZATION FUNCTIONS ---
+def safe_int(val, default=0):
+    try: return int(float(val))
+    except: return default
+
+def safe_str(val, default=""):
+    if pd.isna(val): return default
+    return str(val).strip()
+
+def safe_bool(val):
+    if pd.isna(val): return False
+    return bool(val)
+
 # --- CLOUD DATABASE FUNCTIONS ---
 def create_room(df):
     pin = str(random.randint(1000, 9999))
     records = []
+    
     for _, row in df.iterrows():
         records.append({
             "room_pin": pin,
-            "session": int(row.get("Session", 1)),
-            "swimmer": str(row.get("Swimmer", "")),
-            "age": str(row.get("Age", "")),
-            "event": str(row.get("Event", "")),
-            "heat": str(row.get("Heat", "")),
-            "lane": int(row.get("Lane", 0)) if pd.notna(row.get("Lane")) else 0,
-            "entry_time": str(row.get("Entry Time", "")),
-            "achieved_time": str(row.get("Achieved Time", "")),
-            "coach_notes": str(row.get("Coach Notes", "")),
-            "checked_in": bool(row.get("Checked In", False)),
-            "checked_out": bool(row.get("Checked Out", False)),
-            "seen_coach": bool(row.get("Seen Coach", False)),
-            "in_marshalling": bool(row.get("In Marshalling", False))
+            "session": safe_int(row.get("Session"), 1),
+            "swimmer": safe_str(row.get("Swimmer")),
+            "age": safe_str(row.get("Age")),
+            "event": safe_str(row.get("Event")),
+            "heat": safe_str(row.get("Heat")),
+            "lane": safe_int(row.get("Lane"), 0),
+            "entry_time": safe_str(row.get("Entry Time")),
+            "achieved_time": safe_str(row.get("Achieved Time")),
+            "coach_notes": safe_str(row.get("Coach Notes")),
+            "checked_in": safe_bool(row.get("Checked In")),
+            "checked_out": safe_bool(row.get("Checked Out")),
+            "seen_coach": safe_bool(row.get("Seen Coach")),
+            "in_marshalling": safe_bool(row.get("In Marshalling"))
         })
+        
     try:
-        supabase.table("live_gala_data").insert(records).execute()
+        # Batch insert to avoid database limits
+        batch_size = 100
+        for i in range(0, len(records), batch_size):
+            supabase.table("live_gala_data").insert(records[i:i+batch_size]).execute()
+        return pin, None
     except Exception as e:
-        st.error(f"Failed to push to cloud: {e}")
-    return pin
+        return None, str(e)
 
 def fetch_room(pin):
     try:
@@ -210,13 +228,25 @@ else:
                 else:
                     st.sidebar.error("Invalid PIN or empty room.")
                     
+    # The protected upload button
     if not st.session_state["gala_df"].empty and "id" not in st.session_state["gala_df"].columns:
         if st.sidebar.button("☁️ Upload Gala to Cloud"):
-            with st.spinner("Creating secure room..."):
-                pin = create_room(st.session_state["gala_df"])
-                st.session_state["room_pin"] = pin
-                st.session_state["gala_df"] = fetch_room(pin) # Refetch to get database IDs
-                st.rerun()
+            with st.spinner("Scrubbing data & creating secure room..."):
+                original_df = st.session_state["gala_df"].copy() # Backup local data
+                pin, err = create_room(st.session_state["gala_df"])
+                
+                if pin:
+                    new_df = fetch_room(pin)
+                    if not new_df.empty:
+                        st.session_state["room_pin"] = pin
+                        st.session_state["gala_df"] = new_df
+                        st.rerun()
+                    else:
+                        st.sidebar.error("Upload succeeded, but could not read the data back.")
+                        st.session_state["gala_df"] = original_df # Restore backup
+                else:
+                    st.sidebar.error(f"Upload Failed: {err}")
+                    st.session_state["gala_df"] = original_df # Restore backup
 
 # --- CONFIGURATION & SETTINGS ---
 st.sidebar.divider()
@@ -233,7 +263,7 @@ def fetch_url_content(url):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'en-GB,en;q=0.9,en-US;q=0.8',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1'
