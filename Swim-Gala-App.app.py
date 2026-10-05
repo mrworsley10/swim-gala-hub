@@ -34,7 +34,15 @@ except Exception as e:
 # --- MODERN CUSTOM CSS ---
 st.markdown("""
 <style>
-    header[data-testid="stHeader"] { display: none; }
+    /* Make the header transparent but keep the sidebar toggle button visible */
+    header[data-testid="stHeader"] { 
+        background-color: transparent !important; 
+    }
+    /* Hide the top-right Streamlit menu (Deploy, GitHub icon, etc.) */
+    [data-testid="stToolbar"] { 
+        display: none !important; 
+    }
+    
     .modern-header {
         background-color: #0b0b0b;
         border-radius: 12px;
