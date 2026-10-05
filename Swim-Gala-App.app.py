@@ -104,7 +104,7 @@ if "room_pin" not in st.session_state:
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-page_selection = st.sidebar.radio("Select View", ["⏱️ Coach Race Info", "📋 Swimmer Wall Planner", "🚩 TM Marshalling Info"])
+page_selection = st.sidebar.radio("Select View", ["⏱️️ Coach Race Info", "📋 Swimmer Wall Planner", "🚩 TM Marshalling Info"])
 
 # --- DYNAMIC HEADER INJECTION ---
 if page_selection == "⏱️ Coach Race Info": banner_title = "🏊‍♂ COACH'S CLIPBOARD"
@@ -226,7 +226,6 @@ input_method = st.sidebar.radio("Choose Input Method", ["Web Link (URL)", "Uploa
 
 def fetch_url_content(url):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    # Re-added the robust browser headers to bypass strict WAF security policies
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -507,7 +506,7 @@ else:
 
 
 # --- VIEW 1: COACH RACE INFO ---
-if page_selection == "⏱️️ Coach Race Info":
+if page_selection == "⏱️ Coach Race Info":
     
     if not df_final.empty:
         recorded_swims = df_final[df_final["Achieved Time"] != ""]
