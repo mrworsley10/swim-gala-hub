@@ -6,44 +6,149 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timedelta, time
+import io
+import urllib3
 
 # Streamlit Page Setup
 st.set_page_config(page_title="Swim Gala Hub", layout="wide")
 
-st.title("🏊‍♂️ Swim Gala Hub")
+# --- MODERN CUSTOM CSS (RESPONSIVE TO DARK/LIGHT MODE) ---
+st.markdown("""
+<style>
+    /* Hide Streamlit Default Header */
+    header[data-testid="stHeader"] {
+        display: none;
+    }
+    
+    /* Dark Header Banner (Always Dark for contrast) */
+    .modern-header {
+        background-color: #0b0b0b;
+        border-radius: 12px;
+        padding: 25px 30px;
+        margin-top: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .modern-header h1 {
+        color: #ffffff !important;
+        margin: 0;
+        font-size: 1.8em;
+        font-weight: 800;
+        letter-spacing: 0.5px;
+    }
+    .modern-header .club-name {
+        color: #facc15;
+        font-weight: 700;
+        font-size: 1.2em;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+    }
+    .dashed-divider {
+        border-top: 6px dashed #facc15;
+        margin: 15px 0 25px 0;
+        opacity: 0.9;
+    }
+    
+    /* Status Pill */
+    .status-pill {
+        background-color: #fef08a;
+        color: #854d0e !important;
+        padding: 5px 12px;
+        border-radius: 15px;
+        font-size: 0.85em;
+        font-weight: 700;
+        display: inline-block;
+        margin-bottom: 20px;
+        border: 1px solid #fde047;
+    }
+    .status-dot {
+        color: #16a34a;
+        margin-right: 5px;
+    }
+    
+    /* KPI Cards - Uses Native Theme Variables */
+    .kpi-container {
+        display: flex;
+        gap: 15px;
+        margin-bottom: 25px;
+        flex-wrap: wrap;
+    }
+    .kpi-card {
+        flex: 1;
+        min-width: 200px;
+        background-color: var(--secondary-background-color);
+        border-top: 4px solid #facc15;
+        border-radius: 8px;
+        padding: 15px 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    .kpi-val {
+        font-size: 2.2em;
+        font-weight: 800;
+        color: var(--text-color) !important;
+        line-height: 1;
+        margin-bottom: 5px;
+    }
+    .kpi-val.green { color: #4ade80 !important; }
+    .kpi-label {
+        font-size: 0.75em;
+        color: gray !important;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Initialize Session State Variables
 if "gala_df" not in st.session_state:
     st.session_state["gala_df"] = pd.DataFrame()
 if "meet_name" not in st.session_state:
-    st.session_state["meet_name"] = ""
-
-# Display Extracted Meet / Event Name Prominently at Top
-if st.session_state["meet_name"]:
-    st.subheader(f"🏆 {st.session_state['meet_name']}")
+    st.session_state["meet_name"] = "Swim Gala Live"
+if "redraw_counter" not in st.session_state:
+    st.session_state["redraw_counter"] = 0
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
 page_selection = st.sidebar.radio(
     "Select View",
-    ["📋 Swimmer Wall Planner", "⏱️ Coach Race Info", "🚩 TM Marshalling Info"]
+    ["⏱️ Coach Race Info", "📋 Swimmer Wall Planner", "🚩 TM Marshalling Info"]
 )
 
-st.sidebar.divider()
-st.sidebar.header("⚙️ Gala Schedule & Speed Settings")
+# --- DYNAMIC HEADER INJECTION ---
+if page_selection == "⏱️ Coach Race Info":
+    banner_title = "🏊‍♂ COACH'S CLIPBOARD"
+elif page_selection == "📋 Swimmer Wall Planner":
+    banner_title = "📋 SWIMMER WALL PLANNER"
+else:
+    banner_title = "🚩 TEAM MANAGER TRACKER"
 
-# Global Session Start Times
-session_start_map = {
-    1: st.sidebar.time_input("Session 1 Start", value=time(9, 0)),
-    2: st.sidebar.time_input("Session 2 Start", value=time(14, 0))
-}
+st.markdown(f"""
+<div class="modern-header">
+    <div>
+        <div class="club-name">{banner_title}</div>
+    </div>
+    <div style="text-align: right;">
+        <h1>{st.session_state['meet_name']}</h1>
+        <div style="color: #ccc; font-size: 0.85em; margin-top: 4px;">Live Poolside Tracker</div>
+    </div>
+</div>
+<div class="dashed-divider"></div>
+""", unsafe_allow_html=True)
+
+
+# --- CONFIGURATION & SETTINGS ---
+st.sidebar.divider()
+st.sidebar.header("⚙ Gala Schedule & Speed Settings")
+
+session_start_map = {}
 
 pace_factor = st.sidebar.slider(
     "Heat Timing Speed Factor", 
     min_value=0.8, max_value=1.3, value=1.0, step=0.05,
     help="Adjust if the gala is running faster (<1.0) or slower (>1.0) than standard pace."
 )
-st.sidebar.caption("💡 **Pace Multiplier:** Recalculates estimated call & race times globally across all views.")
 
 st.sidebar.divider()
 st.sidebar.header("Data Source Settings")
@@ -51,19 +156,18 @@ club_filter = st.sidebar.text_input("Club Keyword / Filter", placeholder="e.g. W
 input_method = st.sidebar.radio("Choose Input Method", ["Web Link (URL)", "Upload PDF File", "Paste Text / HTML"])
 
 def fetch_url_content(url):
-    """Fetches web page content with browser headers."""
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+        'Accept': 'text/html,application/xhtml+xml,application/pdf,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.5',
         'Connection': 'keep-alive'
     }
-    response = requests.get(url, headers=headers, timeout=10)
+    response = requests.get(url, headers=headers, timeout=20, verify=False)
     response.raise_for_status()
     return response
 
 def extract_meet_name_from_soup(soup):
-    """Extracts the overall Meet / Event Name (e.g. BCM Autumn Meet 2026)."""
     if soup.title and soup.title.get_text(strip=True):
         title_text = soup.title.get_text(strip=True)
         if title_text and "sportsystems" not in title_text.lower() and len(title_text) > 3:
@@ -76,61 +180,43 @@ def extract_meet_name_from_soup(soup):
     return None
 
 def is_valid_swimmer_name(name):
-    """Validates that extracted text is a real person's name."""
-    if not name or len(name) < 2:
-        return False
-    if not re.search(r'[a-zA-Z]', name):
-        return False
+    if not name or len(name) < 2: return False
+    if not re.search(r'[a-zA-Z]', name): return False
     blocked_terms = {'name', 'swimmer', 'aad', 'lane', 'comp.no', 'comp no', 'comp', 'club', 'event', 'heat', 'entry', 'time'}
-    if name.lower().strip() in blocked_terms:
-        return False
+    if name.lower().strip() in blocked_terms: return False
     return True
 
 def estimate_heat_duration_seconds(event_str):
-    """Estimates heat duration in seconds based on stroke distance."""
     event_lower = str(event_str).lower()
-    if '50m' in event_lower:
-        return 90     # ~1.5 mins per heat
-    elif '100m' in event_lower:
-        return 150    # ~2.5 mins per heat
-    elif '200m' in event_lower:
-        return 270    # ~4.5 mins per heat
-    elif '400m' in event_lower:
-        return 480    # ~8 mins per heat
-    elif '800m' in event_lower:
-        return 840    # ~14 mins per heat
-    elif '1500m' in event_lower:
-        return 1320   # ~22 mins per heat
-    return 180        # Fallback default: 3 mins
+    if '50m' in event_lower: return 90
+    elif '100m' in event_lower: return 150
+    elif '200m' in event_lower: return 270
+    elif '400m' in event_lower: return 480
+    elif '800m' in event_lower: return 840
+    elif '1500m' in event_lower: return 1320
+    return 180
 
 def get_event_num(event_str):
-    """Helper function to extract numeric event number."""
     m = re.search(r'Event\s+(\d+)', str(event_str), re.IGNORECASE)
     return int(m.group(1)) if m else 9999
 
 def infer_session_number(event_str, current_session=1):
-    """Infers session number from explicit session context or event numbers."""
     e_num = get_event_num(event_str)
     if e_num != 9999 and e_num >= 100:
         return e_num // 100
     return current_session
 
 def parse_html_soup(soup, club_keyword):
-    """Parses SPORTSYSTEMS HTML start lists extracting Session, Event, Lane, Name, PB."""
     entries = []
-    current_event = None
-    current_heat = "1"
-    current_session = 1
+    current_event, current_heat, current_session = None, "1", 1
     target_keyword = club_keyword.strip().lower() if club_keyword else ""
     
     for elem in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'p', 'div', 'tr']):
         text = elem.get_text(strip=True)
-        if not text:
-            continue
+        if not text: continue
             
         session_match = re.search(r'Session\s+(\d+)', text, re.IGNORECASE)
-        if session_match:
-            current_session = int(session_match.group(1))
+        if session_match: current_session = int(session_match.group(1))
             
         event_match = re.search(r'(Event\s+\d+.*?)(?=\s+Heat|\n|$)', text, re.IGNORECASE)
         if event_match and elem.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'p', 'div']:
@@ -146,99 +232,179 @@ def parse_html_soup(soup, club_keyword):
             row_text = " ".join(cells)
             
             if not target_keyword or target_keyword in row_text.lower():
-                lane, name, pb_time = None, None, "N/A"
-                
+                lane, name, age, entry_time = None, None, "", "N/A"
+                for c in cells:
+                    if c.isdigit() and 7 <= int(c) <= 25 and not age: age = c
                 if len(cells) >= 6:
-                    lane = cells[0]
-                    name = cells[2]
-                    pb_time = cells[5]
+                    lane, name = cells[0], cells[2]
+                    for c in cells[3:5]:
+                        if c.isdigit() and 7 <= int(c) <= 25:
+                            age = c
+                            break
+                    entry_time = cells[5]
                 elif len(cells) == 5:
                     lane = cells[0]
                     if cells[1].isdigit():
                         name = cells[2]
-                        pb_time = cells[4] if target_keyword and target_keyword not in cells[4].lower() else "N/A"
+                        entry_time = cells[4] if target_keyword and target_keyword not in cells[4].lower() else "N/A"
                     else:
-                        name = cells[1]
-                        pb_time = cells[4]
+                        name, entry_time = cells[1], cells[4]
                 elif len(cells) == 4:
-                    lane = cells[0]
-                    name = cells[1]
+                    lane, name = cells[0], cells[1]
                     
                 if lane and lane.isdigit() and is_valid_swimmer_name(name):
                     sess_num = infer_session_number(current_event, current_session)
                     entries.append({
                         "Session": sess_num,
                         "Swimmer": name.title(),
+                        "Age": age,
                         "Event": current_event,
                         "Heat": int(current_heat) if current_heat.isdigit() else current_heat,
                         "Lane": int(lane),
-                        "PB / Entry Time": pb_time,
+                        "Entry Time": entry_time,
                         "Achieved Time": "",
+                        "Var vs Entry": "",
+                        "Coach Notes": "",
+                        "Checked In": False,
+                        "Checked Out": False,
                         "Seen Coach": False,
                         "In Marshalling": False
                     })
-                    
     return entries
 
 def parse_text_lines(lines, club_keyword):
-    """Fallback text parser for PDF uploads or pasted text with Session detection."""
     entries = []
-    current_event = None
-    current_heat = "1"
-    current_session = 1
+    current_event, current_heat, current_session = None, "1", 1
     target_keyword = club_keyword.strip().lower() if club_keyword else ""
     
     for line in lines:
         line_str = line.strip()
-        if not line_str:
-            continue
+        if not line_str: continue
             
         session_match = re.search(r'Session\s+(\d+)', line_str, re.IGNORECASE)
-        if session_match:
-            current_session = int(session_match.group(1))
+        if session_match: current_session = int(session_match.group(1))
             
         event_match = re.search(r'(Event\s+\d+.*?)(?=\s+Heat|\n|$)', line_str, re.IGNORECASE)
-        if event_match:
-            current_event = event_match.group(1).strip()
+        if event_match: current_event = event_match.group(1).strip()
             
         heat_match = re.search(r'Heat(?:\s+Number\s*-\s*|\s+)(\d+)', line_str, re.IGNORECASE)
-        if heat_match:
-            current_heat = heat_match.group(1)
+        if heat_match: current_heat = heat_match.group(1)
             
         if current_event is not None and (not target_keyword or target_keyword in line_str.lower()):
             m = re.search(r'^\s*(\d+)\s+(?:(\d+)\s+)?([A-Za-z\s\-\'\.]+?)\s+(\d{1,2})\s+.*?(?:' + (re.escape(club_keyword) if target_keyword else r'[A-Za-z]+') + r')\s*([\d\:\.]+|S/T|NT)?', line_str, re.IGNORECASE)
             if m:
-                lane = m.group(1)
-                name = m.group(3).strip()
-                pb_time = m.group(5) if m.group(5) else "N/A"
+                lane, name, age, entry_time = m.group(1), m.group(3).strip(), m.group(4), m.group(5) if m.group(5) else "N/A"
                 if lane.isdigit() and is_valid_swimmer_name(name):
                     sess_num = infer_session_number(current_event, current_session)
                     entries.append({
                         "Session": sess_num,
                         "Swimmer": name.title(),
+                        "Age": age,
                         "Event": current_event,
                         "Heat": int(current_heat) if current_heat.isdigit() else current_heat,
                         "Lane": int(lane),
-                        "PB / Entry Time": pb_time,
+                        "Entry Time": entry_time,
                         "Achieved Time": "",
+                        "Var vs Entry": "",
+                        "Coach Notes": "",
+                        "Checked In": False,
+                        "Checked Out": False,
                         "Seen Coach": False,
                         "In Marshalling": False
                     })
-                
     return entries
 
+def time_to_seconds(t_str):
+    if not t_str or str(t_str).strip().upper() in ["N/A", "S/T", "NT", "", "-", "—", "NONE"]:
+        return None
+    t_str = str(t_str).strip()
+    t_str = re.sub(r'[^\d:\.]', '', t_str)
+    if not t_str: return None
+    
+    try:
+        if t_str.isdigit():
+            if len(t_str) >= 5: 
+                m, s, ms = int(t_str[:-4]), int(t_str[-4:-2]), int(t_str[-2:])
+                return m * 60 + s + (ms / 100.0)
+            elif len(t_str) >= 3: 
+                s, ms = int(t_str[:-2]), int(t_str[-2:])
+                return s + (ms / 100.0)
+            else:
+                return float(t_str)
+
+        parts = re.split(r'[:\.]', t_str)
+        if len(parts) == 3: 
+            ms_val = parts[2]
+            if len(ms_val) == 1: ms_val += '0' 
+            return float(parts[0]) * 60 + float(parts[1]) + float(ms_val[:2]) / 100.0
+        elif len(parts) == 2:
+            ms_val = parts[1]
+            if len(ms_val) == 1: ms_val += '0'
+            if ":" in t_str or len(parts[0]) < 3: 
+                if ":" in t_str: return float(parts[0]) * 60 + float(parts[1])
+                else: return float(parts[0]) + float(ms_val[:2]) / 100.0
+            else:
+                m, s = int(parts[0][:-2]), int(parts[0][-2:])
+                return m * 60 + s + float(ms_val[:2]) / 100.0
+        elif len(parts) == 1:
+            return float(parts[0])
+    except Exception:
+        return None
+    return None
+
+def seconds_to_time(sec):
+    if sec is None or sec < 0: return "N/A"
+    mins = int(sec // 60)
+    remainder = sec % 60
+    if mins > 0: return f"{mins}:{remainder:05.2f}"
+    else: return f"{remainder:05.2f}"
+
+def format_time_input(t_str):
+    if not t_str or str(t_str).strip().lower() in ["", "none", "nan"]: return ""
+    sec = time_to_seconds(t_str)
+    if sec is not None:
+        return seconds_to_time(sec)
+    return str(t_str)
+
+def calculate_variance(achieved_sec, target_sec):
+    if achieved_sec is None or target_sec is None: return "N/A"
+    diff = achieved_sec - target_sec
+    sign = "+" if diff > 0 else ("-" if diff < 0 else "")
+    
+    if diff < 0:
+        return f"✅ -{seconds_to_time(abs(diff))}" 
+    elif diff > 0:
+        return f"🔺 +{seconds_to_time(abs(diff))}" 
+    else:
+        return f"⏸️ 0.00"
+
+def populate_variances(df_input):
+    if df_input.empty: return df_input
+    df = df_input.copy()
+    
+    if "Coach Notes" not in df.columns:
+        df["Coach Notes"] = ""
+        
+    var_entry = []
+    for _, row in df.iterrows():
+        achieved = row.get("Achieved Time", "")
+        entry = row.get("Entry Time", "")
+        
+        ach_sec = time_to_seconds(achieved)
+        entry_sec = time_to_seconds(entry)
+        
+        var_entry.append(calculate_variance(ach_sec, entry_sec))
+        
+    df["Var vs Entry"] = var_entry
+    return df
+
 def compute_gala_schedule_times(df_input, session_starts, pace):
-    """Calculates Coach Time, Marshalling Time, and Est. Race Time across all sessions."""
-    if df_input.empty:
-        return df_input
+    if df_input.empty: return df_input
         
     calc_df = df_input.copy()
-    calc_df["Coach Time"] = ""
-    calc_df["Marshalling Time"] = ""
-    calc_df["Est. Race Time"] = ""
+    calc_df["Coach Time"], calc_df["Marshalling Time"], calc_df["Est. Race Time"] = "", "", ""
     
     sessions = sorted(calc_df["Session"].unique())
-    
     for sess in sessions:
         start_t = session_starts.get(sess, time(9, 0) if sess % 2 != 0 else time(14, 0))
         current_event_start_dt = datetime.combine(datetime.today(), start_t)
@@ -251,20 +417,18 @@ def compute_gala_schedule_times(df_input, session_starts, pace):
             event_mask = sess_mask & (calc_df["Event"] == event)
             event_rows = calc_df[event_mask].sort_values(by=["Heat", "Lane"])
             
-            try:
-                max_heat = int(event_rows["Heat"].max())
-            except (ValueError, TypeError):
-                max_heat = 1
+            max_heat = 1
+            try: max_heat = int(event_rows["Heat"].max())
+            except: pass
                 
             heat_duration_sec = estimate_heat_duration_seconds(event) * pace
             event_coach_dt = current_event_start_dt - timedelta(minutes=20)
             event_coach_time_str = event_coach_dt.strftime("%H:%M")
             
             for idx, row in event_rows.iterrows():
-                try:
-                    h_num = int(row["Heat"])
-                except (ValueError, TypeError):
-                    h_num = 1
+                h_num = 1
+                try: h_num = int(row["Heat"])
+                except: pass
                     
                 heat_offset_sec = (h_num - 1) * heat_duration_sec
                 heat_race_dt = current_event_start_dt + timedelta(seconds=heat_offset_sec)
@@ -278,7 +442,7 @@ def compute_gala_schedule_times(df_input, session_starts, pace):
             
     return calc_df
 
-# Fetching Data Logic
+# --- DATA FETCHING & PROCESSING ---
 parsed_entries = []
 
 if input_method == "Web Link (URL)":
@@ -287,16 +451,13 @@ if input_method == "Web Link (URL)":
         try:
             visited_urls = set()
             pages_to_scrape = [url_input]
-            status_box = st.info("Analyzing SPORTSYSTEMS site structure...")
             
             resp = fetch_url_content(url_input)
             visited_urls.add(url_input)
             soup = BeautifulSoup(resp.text, 'html.parser')
             
-            # Extract Meet Title from Main Page
             meet_name = extract_meet_name_from_soup(soup)
-            if meet_name:
-                st.session_state["meet_name"] = meet_name
+            if meet_name: st.session_state["meet_name"] = meet_name
             
             frames = soup.find_all(['frame', 'iframe'])
             for frame in frames:
@@ -315,8 +476,7 @@ if input_method == "Web Link (URL)":
                     
                     if not st.session_state["meet_name"]:
                         m_name = extract_meet_name_from_soup(p_soup)
-                        if m_name:
-                            st.session_state["meet_name"] = m_name
+                        if m_name: st.session_state["meet_name"] = m_name
                             
                     parsed_entries.extend(parse_html_soup(p_soup, club_filter))
                     
@@ -328,27 +488,21 @@ if input_method == "Web Link (URL)":
                                 if not any(ign in href.lower() for ign in ['menu', 'index', 'header', 'top', 'bottom', 'left']):
                                     sub_links.append(full_url)
                                 visited_urls.add(full_url)
-                except Exception:
-                    continue
+                except: continue
             
             if sub_links:
-                progress_bar = st.progress(0)
-                for i, link in enumerate(sub_links):
-                    status_box.info(f"Scanning heat sheet {i+1} of {len(sub_links)}...")
+                for link in sub_links:
                     try:
                         link_resp = fetch_url_content(link)
                         link_soup = BeautifulSoup(link_resp.text, 'html.parser')
                         parsed_entries.extend(parse_html_soup(link_soup, club_filter))
-                    except Exception:
-                        continue
-                    progress_bar.progress((i + 1) / len(sub_links))
+                    except: continue
             
             if parsed_entries:
                 st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                status_box.success(f"Finished scanning! Loaded {len(st.session_state['gala_df'])} swimmer entries.")
                 st.rerun()
             else:
-                status_box.warning("Finished scanning, but no entries matching your Club Keyword were found.")
+                st.sidebar.warning("No entries matching your Club Keyword were found.")
             
         except Exception as e:
             st.error(f"Could not load web page: {e}")
@@ -360,8 +514,7 @@ elif input_method == "Upload PDF File":
         with pdfplumber.open(uploaded_file) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
-                if page_text:
-                    lines.extend(page_text.split("\n"))
+                if page_text: lines.extend(page_text.split("\n"))
         if lines and not st.session_state["meet_name"]:
             for line in lines[:5]:
                 clean_line = line.strip()
@@ -386,21 +539,113 @@ elif input_method == "Paste Text / HTML":
         if parsed_entries:
             st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
 
+# --- DATA COMPILATION ---
 df = st.session_state["gala_df"]
 
-# Compute times across the dataset
 if not df.empty:
-    df_with_times = compute_gala_schedule_times(df, session_start_map, pace_factor)
-else:
-    df_with_times = df
+    if "Checked In" not in df.columns:
+        st.session_state["gala_df"]["Checked In"] = False
+        df["Checked In"] = False
+    if "Checked Out" not in df.columns:
+        st.session_state["gala_df"]["Checked Out"] = False
+        df["Checked Out"] = False
 
-# --- VIEW 1: SWIMMER WALL PLANNER ---
-if page_selection == "📋 Swimmer Wall Planner":
-    st.header("📋 Swimmer A–Z Wall Planner")
+if not df.empty:
+    df_with_variances = populate_variances(df)
+    df_final = compute_gala_schedule_times(df_with_variances, session_start_map, pace_factor)
+else:
+    df_final = df
+
+
+# --- VIEW 1: COACH RACE INFO ---
+if page_selection == "⏱️ Coach Race Info":
     
-    if not df_with_times.empty:
-        sorted_df = df_with_times.sort_values(by=["Swimmer", "Session", "Event"])
+    if not df_final.empty:
+        recorded_swims = df_final[df_final["Achieved Time"] != ""]
+        swims_done = len(recorded_swims)
+        total_swims = len(df_final)
+        faster_count = df_final["Var vs Entry"].str.startswith("✅").sum()
+        current_time_str = datetime.now().strftime("%H:%M")
         
+        st.markdown(f"""
+        <div class="status-pill">
+            <span class="status-dot">●</span> Live tracking active · updated {current_time_str}
+        </div>
+        
+        <div class="kpi-container">
+            <div class="kpi-card">
+                <div class="kpi-val">{swims_done}</div>
+                <div class="kpi-label">OF {total_swims} SWIMS DONE</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-val green">{faster_count}</div>
+                <div class="kpi-label">FASTER THAN ENTRY</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-val">{total_swims - swims_done}</div>
+                <div class="kpi-label">SWIMS REMAINING</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        sessions = sorted(df_final["Session"].unique())
+        for sess in sessions:
+            st.markdown(f"<h3 style='margin-top: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px; color:var(--text-color);'>Session {sess} Input</h3>", unsafe_allow_html=True)
+            sess_df = df_final[df_final["Session"] == sess]
+            events = sorted(sess_df["Event"].unique(), key=get_event_num)
+            
+            for event in events:
+                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"])
+                
+                with st.expander(f"🏊 {event} ({len(event_df)} Swimmers)", expanded=True):
+                    display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Var vs Entry", "Coach Notes"]
+                    editor_key = f"editor_coach_s{sess}_{event}_{st.session_state['redraw_counter']}"
+                    
+                    edited_event_df = st.data_editor(
+                        event_df[display_cols],
+                        key=editor_key,
+                        disabled=["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Var vs Entry"],
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                    
+                    changes_made = False
+                    for _, edited_row in edited_event_df.iterrows():
+                        mask = (
+                            (st.session_state["gala_df"]["Session"] == sess) &
+                            (st.session_state["gala_df"]["Event"] == event) & 
+                            (st.session_state["gala_df"]["Swimmer"] == edited_row["Swimmer"]) &
+                            (st.session_state["gala_df"]["Heat"] == edited_row["Heat"])
+                        )
+                        curr_achieved = str(st.session_state["gala_df"].loc[mask, "Achieved Time"].values[0])
+                        curr_notes = str(st.session_state["gala_df"].loc[mask, "Coach Notes"].values[0])
+                        
+                        raw_ach = str(edited_row["Achieved Time"]) if pd.notna(edited_row["Achieved Time"]) else ""
+                        if raw_ach.lower() in ["none", "nan"]: raw_ach = ""
+                        new_notes = str(edited_row["Coach Notes"]) if pd.notna(edited_row["Coach Notes"]) else ""
+                        if new_notes.lower() in ["none", "nan"]: new_notes = ""
+                        
+                        formatted_ach = format_time_input(raw_ach)
+                        
+                        if raw_ach != curr_achieved:
+                            st.session_state["gala_df"].loc[mask, "Achieved Time"] = formatted_ach
+                            changes_made = True
+                        if new_notes != curr_notes:
+                            st.session_state["gala_df"].loc[mask, "Coach Notes"] = new_notes
+                            changes_made = True
+                            
+                    if changes_made:
+                        st.session_state['redraw_counter'] += 1
+                        st.rerun()
+
+    else:
+        st.info("👈 **Please load your gala meet data** from the sidebar first.")
+
+# --- VIEW 2: SWIMMER WALL PLANNER ---
+elif page_selection == "📋 Swimmer Wall Planner":
+    
+    if not df_final.empty:
+        sorted_df = df_final.sort_values(by=["Swimmer", "Session", "Event"])
         current_swimmer = None
         club_display = f"{club_filter.upper()} " if club_filter.strip() else ""
         header_meet = f" — {st.session_state['meet_name']}" if st.session_state["meet_name"] else ""
@@ -409,129 +654,79 @@ if page_selection == "📋 Swimmer Wall Planner":
         for idx, row in sorted_df.iterrows():
             if row["Swimmer"] != current_swimmer:
                 current_swimmer = row["Swimmer"]
-                formatted_output += f"\n### 👤 {current_swimmer}\n"
-            
+                formatted_output += f"\n### 👤 {current_swimmer} *(Age: {row.get('Age', 'N/A')})*\n"
             formatted_output += (
                 f"* **Session {row['Session']} | {row['Event']}** — "
-                f"Heat {row['Heat']}, Lane {row['Lane']} *(PB: {row['PB / Entry Time']})* | "
+                f"Heat {row['Heat']}, Lane {row['Lane']} *(Entry: {row['Entry Time']})* | "
                 f"🚩 **Marshalling:** {row['Marshalling Time']} | "
                 f"⏱️ **Est. Race:** {row['Est. Race Time']}\n"
             )
-        
         st.markdown(formatted_output)
-        
-        st.download_button(
-            label="📄 Download Printable Schedule (.txt)",
-            data=formatted_output,
-            file_name="gala_wall_schedule.txt",
-            mime="text/plain"
-        )
+        st.download_button("📄 Download Printable Schedule (.txt)", formatted_output, "gala_wall_schedule.txt", "text/plain")
     else:
-        st.info("👈 Load gala data from the sidebar to display the Swimmer Wall Planner.")
-
-# --- VIEW 2: COACH RACE INFO ---
-elif page_selection == "⏱️ Coach Race Info":
-    st.header("⏱️ Coach Race Info (Event Chronological Order)")
-    st.markdown("Events listed sequentially by Session for coaches to track PBs and record race times.")
-    
-    if not df_with_times.empty:
-        sessions = sorted(df_with_times["Session"].unique())
-        
-        for sess in sessions:
-            st.subheader(f"📅 Session {sess}")
-            sess_df = df_with_times[df_with_times["Session"] == sess]
-            events = sorted(sess_df["Event"].unique(), key=get_event_num)
-            
-            for event in events:
-                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"])
-                club_label = f"{club_filter} " if club_filter.strip() else ""
-                
-                with st.expander(f"🏊 {event} ({len(event_df)} {club_label}Swimmers)", expanded=True):
-                    display_cols = ["Heat", "Lane", "Swimmer", "PB / Entry Time", "Achieved Time"]
-                    
-                    edited_event_df = st.data_editor(
-                        event_df[display_cols],
-                        key=f"editor_coach_s{sess}_{event}",
-                        disabled=["Heat", "Lane", "Swimmer", "PB / Entry Time"],
-                        hide_index=True,
-                        use_container_width=True
-                    )
-                    
-                    for _, edited_row in edited_event_df.iterrows():
-                        mask = (
-                            (st.session_state["gala_df"]["Session"] == sess) &
-                            (st.session_state["gala_df"]["Event"] == event) & 
-                            (st.session_state["gala_df"]["Swimmer"] == edited_row["Swimmer"]) &
-                            (st.session_state["gala_df"]["Heat"] == edited_row["Heat"])
-                        )
-                        st.session_state["gala_df"].loc[mask, "Achieved Time"] = edited_row["Achieved Time"]
-        
-        st.divider()
-        st.subheader("📥 Export Recorded Gala Results")
-        csv_data = st.session_state["gala_df"].to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📊 Download Coach Results (.csv)",
-            data=csv_data,
-            file_name="gala_coach_results.csv",
-            mime="text/csv"
-        )
-    else:
-        st.info("👈 Load gala data from the sidebar to populate event heat sheets.")
+        st.info("👈 **Please load your gala meet data** from the sidebar first.")
 
 # --- VIEW 3: TM MARSHALLING INFO ---
 elif page_selection == "🚩 TM Marshalling Info":
-    st.header("🚩 Team Manager Marshalling & Call Tracker")
+    
     st.markdown("Track swimmer movement split by **Session**. All swimmers in an event see **Coach** at event call time (-20 mins); **Marshalling** is calculated per individual **Heat** (-10 mins).")
     
-    if not df_with_times.empty:
-        sessions = sorted(df_with_times["Session"].unique())
-        
-        with st.expander("ℹ️ How does Heat Timing Speed Factor work?", expanded=False):
-            st.markdown("""
-            **Heat Timing Speed Factor** (in the sidebar) lets Team Managers adjust estimated call times live during a session:
-            * **`1.0` (Standard Pace):** Assumes the gala runs on normal schedule based on standard event distances.
-            * **Below `1.0` (e.g. `0.85` or `0.90` — Running Ahead):** Use when heats turn over quickly. Shortens estimated heat times and brings Coach/Marshalling calls earlier so swimmers don't miss races.
-            * **Above `1.0` (e.g. `1.10` or `1.20` — Running Behind):** Use when there are delays or long breaks. Lengthens heat estimates and pushes call times back so swimmers aren't sent to marshalling too early.
-            """)
-
+    if not df_final.empty:
+        sessions = sorted(df_final["Session"].unique())
         for sess in sessions:
-            st.subheader(f"🚩 Session {sess} (Starts ~{session_start_map.get(sess, time(9,0)).strftime('%H:%M')})")
+            st.markdown(f"<h3 style='margin-top: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px; color:var(--text-color);'>Session {sess}</h3>", unsafe_allow_html=True)
+            sess_df = df_final[df_final["Session"] == sess]
             
-            sess_df = df_with_times[df_with_times["Session"] == sess]
+            roll_call_df = sess_df.drop_duplicates(subset=["Swimmer"])[["Swimmer", "Age", "Checked In", "Checked Out"]].sort_values("Swimmer")
+            checked_in_count = roll_call_df["Checked In"].sum()
+            total_swimmers = len(roll_call_df)
+            
+            with st.expander(f"📝 Session {sess} Swimmer Roll Call ({checked_in_count} / {total_swimmers} Arrived)", expanded=True):
+                rc_editor_key = f"rollcall_s{sess}_{st.session_state['redraw_counter']}"
+                edited_rc = st.data_editor(roll_call_df, key=rc_editor_key, disabled=["Swimmer", "Age"], hide_index=True, use_container_width=True)
+                rc_changes = False
+                for _, row in edited_rc.iterrows():
+                    swimmer = row["Swimmer"]
+                    mask = (st.session_state["gala_df"]["Session"] == sess) & (st.session_state["gala_df"]["Swimmer"] == swimmer)
+                    if row["Checked In"] != st.session_state["gala_df"].loc[mask, "Checked In"].iloc[0]:
+                        st.session_state["gala_df"].loc[mask, "Checked In"] = row["Checked In"]
+                        rc_changes = True
+                    if row["Checked Out"] != st.session_state["gala_df"].loc[mask, "Checked Out"].iloc[0]:
+                        st.session_state["gala_df"].loc[mask, "Checked Out"] = row["Checked Out"]
+                        rc_changes = True
+                if rc_changes:
+                    st.session_state['redraw_counter'] += 1
+                    st.rerun()
+
             events = sorted(sess_df["Event"].unique(), key=get_event_num)
-            
             for event in events:
                 event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"])
-                
-                display_cols = ["Heat", "Lane", "Swimmer", "Coach Time", "Seen Coach", "Marshalling Time", "In Marshalling", "Est. Race Time"]
-                
+                display_cols = ["Heat", "Lane", "Swimmer", "Age", "Coach Time", "Seen Coach", "Marshalling Time", "In Marshalling", "Est. Race Time"]
                 first_row = event_df.iloc[0] if not event_df.empty else None
                 coach_call_str = first_row["Coach Time"] if first_row is not None else "N/A"
                 event_start_str = first_row["Est. Race Time"] if first_row is not None else "N/A"
                 
                 with st.expander(f"🏊 {event} — Event Starts ~{event_start_str} | Coach Call: {coach_call_str} ({len(event_df)} Swimmers)", expanded=True):
-                    
+                    editor_key = f"editor_tm_s{sess}_{event}_{st.session_state['redraw_counter']}"
                     edited_tm_df = st.data_editor(
                         event_df[display_cols],
-                        key=f"editor_tm_s{sess}_{event}",
-                        disabled=["Heat", "Lane", "Swimmer", "Coach Time", "Marshalling Time", "Est. Race Time"],
-                        column_config={
-                            "Seen Coach": st.column_config.CheckboxColumn("Seen Coach?"),
-                            "In Marshalling": st.column_config.CheckboxColumn("In Marshalling?")
-                        },
+                        key=editor_key,
+                        disabled=["Heat", "Lane", "Swimmer", "Age", "Coach Time", "Marshalling Time", "Est. Race Time"],
+                        column_config={"Seen Coach": st.column_config.CheckboxColumn("Seen Coach?"), "In Marshalling": st.column_config.CheckboxColumn("In Marshalling?")},
                         hide_index=True,
                         use_container_width=True
                     )
-                    
+                    changes_made_tm = False
                     for _, edited_row in edited_tm_df.iterrows():
-                        mask = (
-                            (st.session_state["gala_df"]["Session"] == sess) &
-                            (st.session_state["gala_df"]["Event"] == event) & 
-                            (st.session_state["gala_df"]["Swimmer"] == edited_row["Swimmer"]) &
-                            (st.session_state["gala_df"]["Heat"] == edited_row["Heat"])
-                        )
-                        st.session_state["gala_df"].loc[mask, "Seen Coach"] = edited_row["Seen Coach"]
-                        st.session_state["gala_df"].loc[mask, "In Marshalling"] = edited_row["In Marshalling"]
-
+                        mask = (st.session_state["gala_df"]["Session"] == sess) & (st.session_state["gala_df"]["Event"] == event) & (st.session_state["gala_df"]["Swimmer"] == edited_row["Swimmer"]) & (st.session_state["gala_df"]["Heat"] == edited_row["Heat"])
+                        if edited_row["Seen Coach"] != st.session_state["gala_df"].loc[mask, "Seen Coach"].values[0]:
+                            st.session_state["gala_df"].loc[mask, "Seen Coach"] = edited_row["Seen Coach"]
+                            changes_made_tm = True
+                        if edited_row["In Marshalling"] != st.session_state["gala_df"].loc[mask, "In Marshalling"].values[0]:
+                            st.session_state["gala_df"].loc[mask, "In Marshalling"] = edited_row["In Marshalling"]
+                            changes_made_tm = True
+                    if changes_made_tm:
+                        st.session_state['redraw_counter'] += 1
+                        st.rerun()
     else:
-        st.info("👈 Load gala data from the sidebar to populate the Team Manager tracker.")
+        st.info("👈 **Please load your gala meet data** from the sidebar first.")
