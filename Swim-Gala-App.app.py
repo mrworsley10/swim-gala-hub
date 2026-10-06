@@ -145,6 +145,8 @@ st.markdown("""
 # Initialize Session State Variables
 if "gala_df" not in st.session_state:
     st.session_state["gala_df"] = pd.DataFrame()
+if "target_df" not in st.session_state:
+    st.session_state["target_df"] = pd.DataFrame()
 if "meet_name" not in st.session_state:
     st.session_state["meet_name"] = "Swim Gala Live"
 if "redraw_counter" not in st.session_state:
@@ -191,6 +193,36 @@ def safe_str(val, default=""):
 def safe_bool(val):
     if pd.isna(val): return False
     return bool(val)
+
+def extract_gender(event_str):
+    e_lower = str(event_str).lower()
+    if 'female' in e_lower or 'girl' in e_lower or 'women' in e_lower: return 'F'
+    if 'male' in e_lower or 'boy' in e_lower or 'men' in e_lower or 'open' in e_lower: return 'M'
+    return 'M'
+
+def extract_standard_event(event_str):
+    m = re.search(r'(\d+m\s+[A-Za-z]+(?:\s+IM)?)', str(event_str), re.IGNORECASE)
+    if m:
+        stroke = m.group(1).title()
+        stroke = stroke.replace('Breaststroke', 'Breast').replace('Breaststrok', 'Breast')
+        stroke = stroke.replace('Freestyle', 'Free')
+        stroke = stroke.replace('Backstroke', 'Back')
+        stroke = stroke.replace('Butterfly', 'Fly')
+        stroke = stroke.replace('Ind. Medley', 'IM').replace('Ind Medley', 'IM')
+        stroke = stroke.replace('M ', 'm ').replace(' Im', ' IM')
+        return stroke.strip()
+    return ""
+
+def format_target_col(target_time, base_sec):
+    if pd.isna(target_time) or str(target_time).strip() == "":
+        return ""
+    t_sec = time_to_seconds(target_time)
+    if t_sec is None: 
+        return ""
+    var_str = calculate_variance(base_sec, t_sec) if base_sec is not None else ""
+    if var_str and var_str != "N/A":
+        return f"{target_time} ({var_str})"
+    return f"{target_time}"
 
 # --- CLOUD DATABASE FUNCTIONS ---
 def create_room(df):
@@ -247,7 +279,6 @@ def safe_update_db(row_id, field, value):
         except Exception:
             pass
 
-
 # --- CLOUD SYNC SIDEBAR ---
 st.sidebar.divider()
 st.sidebar.header("☁️ Live Cloud Sync")
@@ -294,16 +325,41 @@ else:
                 else:
                     st.sidebar.error(f"Upload Failed: {err}")
                     st.session_state["gala_df"] = original_df
-                    
-    if st.sidebar.button("🚨 Wipe All Cloud Rooms"):
-        with st.spinner("Clearing database..."):
-            try:
-                supabase.table("live_gala_data").delete().gt("id", 0).execute()
-                st.session_state["room_pin"] = None
-                st.session_state["gala_df"] = pd.DataFrame()
-                st.rerun()
-            except Exception as e:
-                st.sidebar.error(f"Failed to clear database: {e}")
+
+# --- ADMIN SECURE WIPER ---
+st.sidebar.divider()
+with st.sidebar.expander("🔐 Admin Tools"):
+    admin_pin = st.text_input("Enter Admin PIN to unlock", type="password")
+    correct_pin = st.secrets.get("ADMIN_PIN", "9999") 
+    
+    if admin_pin == correct_pin:
+        st.success("Admin Access Granted")
+        if st.button("🚨 Wipe All Cloud Rooms"):
+            with st.spinner("Clearing database..."):
+                try:
+                    supabase.table("live_gala_data").delete().gt("id", 0).execute()
+                    st.session_state["room_pin"] = None
+                    st.session_state["gala_df"] = pd.DataFrame()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to clear database: {e}")
+    elif admin_pin:
+        st.error("Incorrect PIN")
+
+# --- OPTIONAL: LOAD COACHING DATA ---
+st.sidebar.divider()
+st.sidebar.header("📈 Optional: Load Coaching Data")
+st.sidebar.info("Upload a CSV with Target Times to enable variance tracking for swimmers.")
+target_file = st.sidebar.file_uploader("Upload Target Times (CSV)", type=["csv"])
+if target_file is not None:
+    try:
+        st.session_state["target_df"] = pd.read_csv(target_file)
+        st.sidebar.success(f"Loaded {len(st.session_state['target_df'])} target times!")
+    except Exception as e:
+        st.sidebar.error("Error reading CSV file.")
+else:
+    st.session_state["target_df"] = pd.DataFrame()
+
 
 # --- CONFIGURATION & SETTINGS ---
 st.sidebar.divider()
@@ -664,15 +720,49 @@ if page_selection == VIEW_COACH:
             events = sorted(sess_df["Event"].unique(), key=get_event_num)
             
             for event in events:
-                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"])
+                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"]).copy()
                 with st.expander(f"🏊 {event} ({len(event_df)} Swimmers)", expanded=True):
+                    
                     display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Coach Notes"]
+                    disabled_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time"]
+
+                    # Dynamically inject the Target Times if the file is loaded
+                    if not st.session_state["target_df"].empty:
+                        target_df = st.session_state["target_df"]
+                        county_col, reg_col = [], []
+                        
+                        for _, r in event_df.iterrows():
+                            g = extract_gender(r['Event'])
+                            a = safe_int(r['Age'], -1)
+                            e = extract_standard_event(r['Event'])
+                            
+                            match = target_df[(target_df['Gender'] == g) & (target_df['Age'] == a) & (target_df['Event'].str.lower() == e.lower())]
+                            
+                            c_time = match.iloc[0].get('County_Time', "") if not match.empty and pd.notna(match.iloc[0].get('County_Time')) else ""
+                            r_time = match.iloc[0].get('Regional_Time', "") if not match.empty and pd.notna(match.iloc[0].get('Regional_Time')) else ""
+                            
+                            ach_sec = time_to_seconds(r['Achieved Time'])
+                            ent_sec = time_to_seconds(r['Entry Time'])
+                            
+                            # Base variance off Achieved Time, but default to Entry Time if race hasn't happened yet
+                            base_sec = ach_sec if ach_sec is not None else ent_sec
+                            
+                            county_col.append(format_target_col(c_time, base_sec))
+                            reg_col.append(format_target_col(r_time, base_sec))
+                            
+                        event_df["County Target"] = county_col
+                        event_df["Regional Target"] = reg_col
+                        
+                        # Display targets between Entry Time and Achieved Time
+                        display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "County Target", "Regional Target", "Achieved Time", "Coach Notes"]
+                        disabled_cols.extend(["County Target", "Regional Target"])
+
                     editor_key = f"editor_coach_s{sess}_{event}_{st.session_state['redraw_counter']}"
                     
                     edited_event_df = st.data_editor(
                         event_df[display_cols],
                         key=editor_key,
-                        disabled=["Heat", "Lane", "Swimmer", "Age", "Entry Time"],
+                        disabled=disabled_cols,
                         hide_index=True,
                         use_container_width=True
                     )
