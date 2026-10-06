@@ -15,7 +15,6 @@ from supabase import create_client, Client
 VIEW_COACH = "⏱ Coach Race Info"
 VIEW_WALL = "📋 Swimmer Wall Planner"
 VIEW_TM = "🚩 TM Marshalling Info"
-VIEW_PARENT = "👪 Parent Portal"
 
 # Streamlit Page Setup
 st.set_page_config(page_title="Swim Gala Hub", layout="wide")
@@ -159,13 +158,12 @@ if "last_url" not in st.session_state:
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM, VIEW_PARENT])
+page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM])
 
 # --- DYNAMIC APP HEADER ---
 if page_selection == VIEW_COACH: icon_title = "⏱ COACH"
 elif page_selection == VIEW_WALL: icon_title = "📋 PLANNER"
-elif page_selection == VIEW_TM: icon_title = "🚩 TRACKER"
-else: icon_title = "👪 PARENTS"
+else: icon_title = "🚩 TRACKER"
 
 sync_class = "sync-live" if st.session_state["room_pin"] else "sync-offline"
 sync_text = f"🟢 Room: {st.session_state['room_pin']}" if st.session_state["room_pin"] else "⚪ Offline"
@@ -300,42 +298,40 @@ if st.session_state.get("room_pin"):
         st.rerun()
         
     # --- ROOM-BOUND TARGET UPLOADER ---
-    # Hide the Target uploader from the Parent View so they can't accidentally mess with it
-    if page_selection != VIEW_PARENT:
-        st.sidebar.markdown("---")
-        with st.sidebar.expander("🎯 Room Target Times", expanded=False):
-            if not st.session_state["target_df"].empty:
-                st.success(f"{len(st.session_state['target_df'])} Targets Loaded.")
-            else:
-                st.info("No targets loaded for this room.")
-                
-            target_file = st.file_uploader("Upload Club/County Targets (CSV)", type=["csv"])
-            if target_file is not None:
-                if st.button("Link Targets to Room"):
-                    with st.spinner("Uploading to room..."):
-                        try:
-                            upload_df = pd.read_csv(target_file)
-                            records = []
-                            for _, r in upload_df.iterrows():
-                                records.append({
-                                    "room_pin": st.session_state["room_pin"],
-                                    "gender": safe_str(r.get("Gender")),
-                                    "age": safe_int(r.get("Age"), -1),
-                                    "event": safe_str(r.get("Event")),
-                                    "county_time": safe_str(r.get("County_Time")),
-                                    "regional_time": safe_str(r.get("Regional_Time"))
-                                })
-                            
-                            # Clear old targets for this specific room, then insert new ones
-                            supabase.table("target_times").delete().eq("room_pin", st.session_state["room_pin"]).execute()
-                            for i in range(0, len(records), 100):
-                                supabase.table("target_times").insert(records[i:i+100]).execute()
-                            
-                            st.session_state["target_df"] = fetch_room_targets(st.session_state["room_pin"])
-                            st.success("Linked! All users in this room now see these targets.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Upload failed: {e}")
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("🎯 Room Target Times", expanded=False):
+        if not st.session_state["target_df"].empty:
+            st.success(f"{len(st.session_state['target_df'])} Targets active in this room.")
+        else:
+            st.info("No targets loaded for this room.")
+            
+        target_file = st.file_uploader("Upload Club/County Targets (CSV)", type=["csv"])
+        if target_file is not None:
+            if st.button("Link Targets to Room"):
+                with st.spinner("Uploading to room..."):
+                    try:
+                        upload_df = pd.read_csv(target_file)
+                        records = []
+                        for _, r in upload_df.iterrows():
+                            records.append({
+                                "room_pin": st.session_state["room_pin"],
+                                "gender": safe_str(r.get("Gender")),
+                                "age": safe_int(r.get("Age"), -1),
+                                "event": safe_str(r.get("Event")),
+                                "county_time": safe_str(r.get("County_Time")),
+                                "regional_time": safe_str(r.get("Regional_Time"))
+                            })
+                        
+                        # Clear old targets for this specific room, then insert new ones
+                        supabase.table("target_times").delete().eq("room_pin", st.session_state["room_pin"]).execute()
+                        for i in range(0, len(records), 100):
+                            supabase.table("target_times").insert(records[i:i+100]).execute()
+                        
+                        st.session_state["target_df"] = fetch_room_targets(st.session_state["room_pin"])
+                        st.success("Linked! All users in this room now see these targets.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Upload failed: {e}")
 
 else:
     st.sidebar.info("Sync across devices by creating or joining a room.")
@@ -352,8 +348,7 @@ else:
                 else:
                     st.sidebar.error("Invalid PIN or empty room.")
                     
-    # Only show the "Create Gala" features if not in the Parent View
-    if page_selection != VIEW_PARENT and not st.session_state["gala_df"].empty and "id" not in st.session_state["gala_df"].columns:
+    if not st.session_state["gala_df"].empty and "id" not in st.session_state["gala_df"].columns:
         if st.sidebar.button("☁️ Upload Gala to Cloud"):
             with st.spinner("Scrubbing data & creating secure room..."):
                 original_df = st.session_state["gala_df"].copy()
@@ -373,47 +368,39 @@ else:
                     st.sidebar.error(f"Upload Failed: {err}")
                     st.session_state["gala_df"] = original_df
 
-# --- ADMIN SECURE WIPER ---
-if page_selection != VIEW_PARENT:
-    st.sidebar.divider()
-    with st.sidebar.expander("🔐 Admin Tools"):
-        admin_pin = st.text_input("Enter Admin PIN to unlock", type="password")
-        correct_pin = st.secrets.get("ADMIN_PIN", "9999") 
-        
-        if admin_pin == correct_pin:
-            st.success("Admin Access Granted")
-            if st.button("🚨 Wipe All Cloud Rooms"):
-                with st.spinner("Clearing entire database..."):
-                    try:
-                        # Wipe both the gala races and all linked target times
-                        supabase.table("live_gala_data").delete().gt("id", 0).execute()
-                        supabase.table("target_times").delete().gt("id", 0).execute()
-                        st.session_state["room_pin"] = None
-                        st.session_state["gala_df"] = pd.DataFrame()
-                        st.session_state["target_df"] = pd.DataFrame()
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Failed to clear database: {e}")
-        elif admin_pin:
-            st.error("Incorrect PIN")
-
-# --- CONFIGURATION & SETTINGS (Hidden from Parents) ---
-if page_selection != VIEW_PARENT:
-    st.sidebar.divider()
-    st.sidebar.header("⚙ Gala Schedule Settings")
-    session_start_map = {}
-    pace_factor = st.sidebar.slider("Heat Timing Speed Factor", 0.8, 1.3, 1.0, 0.05)
+# --- OWNER SECURE WIPER ---
+st.sidebar.divider()
+with st.sidebar.expander("🔐 Owner Tools"):
+    admin_pin = st.text_input("Enter Owner PIN", type="password")
+    correct_pin = st.secrets.get("ADMIN_PIN", "9999") 
     
-    st.sidebar.divider()
-    st.sidebar.header("Load New Data Source")
-    club_filter = st.sidebar.text_input("Club Keyword / Filter", placeholder="e.g. Warrington")
-    input_method = st.sidebar.radio("Choose Input Method", ["Web Link (URL)", "Upload PDF File", "Paste Text / HTML"])
-else:
-    # Defaults for Parent View
-    session_start_map = {}
-    pace_factor = 1.0
-    club_filter = ""
-    input_method = "None"
+    if admin_pin == correct_pin:
+        st.success("Owner Access Granted")
+        if st.button("🚨 Wipe All Cloud Rooms"):
+            with st.spinner("Clearing entire database..."):
+                try:
+                    # Wipes all live data and target times
+                    supabase.table("live_gala_data").delete().gt("id", 0).execute()
+                    supabase.table("target_times").delete().gt("id", 0).execute()
+                    st.session_state["room_pin"] = None
+                    st.session_state["gala_df"] = pd.DataFrame()
+                    st.session_state["target_df"] = pd.DataFrame()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Failed to clear database: {e}")
+    elif admin_pin:
+        st.error("Incorrect PIN")
+
+# --- CONFIGURATION & SETTINGS ---
+st.sidebar.divider()
+st.sidebar.header("⚙ Gala Schedule Settings")
+session_start_map = {}
+pace_factor = st.sidebar.slider("Heat Timing Speed Factor", 0.8, 1.3, 1.0, 0.05)
+
+st.sidebar.divider()
+st.sidebar.header("Load New Data Source")
+club_filter = st.sidebar.text_input("Club Keyword / Filter", placeholder="e.g. Warrington")
+input_method = st.sidebar.radio("Choose Input Method", ["Web Link (URL)", "Upload PDF File", "Paste Text / HTML"])
 
 def fetch_url_content(url):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -624,7 +611,6 @@ def compute_gala_schedule_times(df_input, session_starts, pace):
         events = sorted(sess_df["Event"].unique(), key=get_event_num)
         
         for event in events:
-            # Sort locally using hidden numeric casts to fix string sorting bugs
             event_mask = sess_mask & (calc_df["Event"] == event)
             event_rows = calc_df[event_mask].sort_values(by=["_sort_heat", "_sort_lane"])
             max_heat = 1
@@ -650,7 +636,6 @@ def compute_gala_schedule_times(df_input, session_starts, pace):
     return calc_df
 
 def get_target_analysis(row, target_df, has_targets):
-    """Centralized logic for calculating Target +/- so Coach and Parent views match perfectly."""
     ach_sec = time_to_seconds(row.get('Achieved Time'))
     ent_sec = time_to_seconds(row.get('Entry Time'))
     c_sec, r_sec = None, None
@@ -668,7 +653,6 @@ def get_target_analysis(row, target_df, has_targets):
         r_sec = time_to_seconds(r_time) if r_time else None
 
     if ach_sec is not None:
-        # POST-RACE Breakdown
         res = []
         ent_ach_var = calculate_variance(ach_sec, ent_sec) if ent_sec else ""
         if ent_ach_var and ent_ach_var != "N/A": res.append(f"PB: {ent_ach_var}")
@@ -681,7 +665,6 @@ def get_target_analysis(row, target_df, has_targets):
             
         return " | ".join(res) if res else "Logged"
     else:
-        # PRE-RACE Breakdown
         if has_targets:
             res = []
             c_ent_var = calculate_variance(ent_sec, c_sec) if ent_sec and c_sec else ""
@@ -694,75 +677,73 @@ def get_target_analysis(row, target_df, has_targets):
 
 
 # --- DATA FETCHING ---
-if page_selection != VIEW_PARENT:
-    parsed_entries = []
-    if input_method == "Web Link (URL)":
-        url_input = st.sidebar.text_input("SPORTSYSTEMS Live URL", value=st.session_state["last_url"])
-        if url_input and st.sidebar.button("Fetch & Process Web Link"):
-            st.session_state["last_url"] = url_input
-            with st.spinner("Fetching and processing data..."):
-                try:
-                    visited_urls = set()
-                    pages_to_scrape = [url_input]
-                    resp = fetch_url_content(url_input)
-                    visited_urls.add(url_input)
-                    soup = BeautifulSoup(resp.text, 'html.parser')
-                    meet_name = extract_meet_name_from_soup(soup)
-                    if meet_name: st.session_state["meet_name"] = meet_name
-                    for frame in soup.find_all(['frame', 'iframe']):
-                        if frame.get('src'): pages_to_scrape.append(urljoin(url_input, frame.get('src')))
-                    sub_links = []
-                    for p_url in list(pages_to_scrape):
-                        try:
-                            p_resp = fetch_url_content(p_url)
-                            visited_urls.add(p_url)
-                            p_soup = BeautifulSoup(p_resp.text, 'html.parser')
-                            parsed_entries.extend(parse_html_soup(p_soup, club_filter))
-                            for a in p_soup.find_all('a', href=True):
-                                full_url = urljoin(p_url, a['href'])
-                                if urlparse(full_url).netloc == urlparse(url_input).netloc and full_url not in visited_urls and a['href'].lower().endswith(('.htm', '.html')):
-                                    sub_links.append(full_url)
-                                    visited_urls.add(full_url)
-                        except: continue
-                    for link in sub_links:
-                        try: parsed_entries.extend(parse_html_soup(BeautifulSoup(fetch_url_content(link).text, 'html.parser'), club_filter))
-                        except: continue
-                    if parsed_entries:
-                        st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                        st.session_state["room_pin"] = None
-                        st.rerun()
-                    else: st.sidebar.warning("No entries matching your Club Keyword were found.")
-                except Exception as e: st.error(f"Could not load web page: {e}")
-    
-    elif input_method == "Upload PDF File":
-        uploaded_file = st.sidebar.file_uploader("Upload Heat Sheet PDF", type=["pdf"])
-        if uploaded_file and st.sidebar.button("Process PDF"):
-            with st.spinner("Extracting data from PDF..."):
-                lines = []
-                with pdfplumber.open(uploaded_file) as pdf:
-                    for page in pdf.pages:
-                        if page.extract_text(): lines.extend(page.extract_text().split("\n"))
-                parsed_entries = parse_text_lines(lines, club_filter)
-                if parsed_entries: 
+parsed_entries = []
+if input_method == "Web Link (URL)":
+    url_input = st.sidebar.text_input("SPORTSYSTEMS Live URL", value=st.session_state["last_url"])
+    if url_input and st.sidebar.button("Fetch & Process Web Link"):
+        st.session_state["last_url"] = url_input
+        with st.spinner("Fetching and processing data..."):
+            try:
+                visited_urls = set()
+                pages_to_scrape = [url_input]
+                resp = fetch_url_content(url_input)
+                visited_urls.add(url_input)
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                meet_name = extract_meet_name_from_soup(soup)
+                if meet_name: st.session_state["meet_name"] = meet_name
+                for frame in soup.find_all(['frame', 'iframe']):
+                    if frame.get('src'): pages_to_scrape.append(urljoin(url_input, frame.get('src')))
+                sub_links = []
+                for p_url in list(pages_to_scrape):
+                    try:
+                        p_resp = fetch_url_content(p_url)
+                        visited_urls.add(p_url)
+                        p_soup = BeautifulSoup(p_resp.text, 'html.parser')
+                        parsed_entries.extend(parse_html_soup(p_soup, club_filter))
+                        for a in p_soup.find_all('a', href=True):
+                            full_url = urljoin(p_url, a['href'])
+                            if urlparse(full_url).netloc == urlparse(url_input).netloc and full_url not in visited_urls and a['href'].lower().endswith(('.htm', '.html')):
+                                sub_links.append(full_url)
+                                visited_urls.add(full_url)
+                    except: continue
+                for link in sub_links:
+                    try: parsed_entries.extend(parse_html_soup(BeautifulSoup(fetch_url_content(link).text, 'html.parser'), club_filter))
+                    except: continue
+                if parsed_entries:
                     st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
                     st.session_state["room_pin"] = None
                     st.rerun()
-    
-    elif input_method == "Paste Text / HTML":
-        pasted_text = st.sidebar.text_area("Paste webpage text directly here", height=200)
-        if pasted_text and st.sidebar.button("Process Text"):
-            with st.spinner("Processing pasted text..."):
-                parsed_entries = parse_text_lines(pasted_text.split("\n"), club_filter)
-                if parsed_entries: 
-                    st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                    st.session_state["room_pin"] = None
-                    st.rerun()
+                else: st.sidebar.warning("No entries matching your Club Keyword were found.")
+            except Exception as e: st.error(f"Could not load web page: {e}")
+
+elif input_method == "Upload PDF File":
+    uploaded_file = st.sidebar.file_uploader("Upload Heat Sheet PDF", type=["pdf"])
+    if uploaded_file and st.sidebar.button("Process PDF"):
+        with st.spinner("Extracting data from PDF..."):
+            lines = []
+            with pdfplumber.open(uploaded_file) as pdf:
+                for page in pdf.pages:
+                    if page.extract_text(): lines.extend(page.extract_text().split("\n"))
+            parsed_entries = parse_text_lines(lines, club_filter)
+            if parsed_entries: 
+                st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+                st.session_state["room_pin"] = None
+                st.rerun()
+
+elif input_method == "Paste Text / HTML":
+    pasted_text = st.sidebar.text_area("Paste webpage text directly here", height=200)
+    if pasted_text and st.sidebar.button("Process Text"):
+        with st.spinner("Processing pasted text..."):
+            parsed_entries = parse_text_lines(pasted_text.split("\n"), club_filter)
+            if parsed_entries: 
+                st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+                st.session_state["room_pin"] = None
+                st.rerun()
 
 # --- DATA COMPILATION ---
 df = st.session_state["gala_df"]
 
 if not df.empty:
-    # Fix sorting issue caused by string-based Heat/Lane numbers from the cloud
     df["_sort_heat"] = pd.to_numeric(df["Heat"], errors='coerce').fillna(9999)
     df["_sort_lane"] = pd.to_numeric(df["Lane"], errors='coerce').fillna(9999)
     
@@ -808,7 +789,6 @@ if page_selection == VIEW_COACH:
         
         sessions = sorted(df_final["Session"].unique())
         
-        # --- UI COLUMN CONFIGURATION (COACH VIEW) ---
         coach_col_config = {
             "Heat": st.column_config.TextColumn("Heat", width="small"),
             "Lane": st.column_config.TextColumn("Lane", width="small"),
@@ -1030,44 +1010,3 @@ elif page_selection == VIEW_TM:
                         st.session_state['redraw_counter'] += 1
                         st.rerun()
     else: st.info("👈 **Please load your gala meet data** from the sidebar first.")
-
-# --- VIEW 4: PARENT PORTAL ---
-elif page_selection == VIEW_PARENT:
-    if not df_final.empty:
-        has_targets = not st.session_state["target_df"].empty
-        target_df = st.session_state["target_df"]
-        
-        st.markdown("### 🔍 Individual Swimmer Search")
-        swimmer_list = sorted(df_final["Swimmer"].unique())
-        selected_swimmer = st.selectbox("Search for a Swimmer:", [""] + swimmer_list)
-        
-        if selected_swimmer:
-            swim_df = df_final[df_final["Swimmer"] == selected_swimmer].copy()
-            
-            # Apply the centralized Target calculation logic so it matches the Coach View perfectly
-            swim_df["Target +/-"] = swim_df.apply(lambda r: get_target_analysis(r, target_df, has_targets), axis=1)
-            
-            # Convert numbers to strings for clean left-alignment
-            swim_df["Heat"] = swim_df["Heat"].astype(str)
-            swim_df["Lane"] = swim_df["Lane"].astype(str)
-            
-            total_races = len(swim_df)
-            done_races = len(swim_df[swim_df["Achieved Time"] != ""])
-            
-            st.markdown(f"### 👤 Report Card: {selected_swimmer} <span style='font-size: 0.6em; color: gray;'>(Age: {swim_df.iloc[0]['Age']})</span>", unsafe_allow_html=True)
-            st.markdown(f"**Progress:** {done_races} / {total_races} Races Completed")
-            
-            display_cols = ["Session", "Event", "Heat", "Lane", "Entry Time", "Achieved Time", "Target +/-", "Coach Notes"]
-            
-            parent_col_config = {
-                "Session": st.column_config.TextColumn("Sess", width="small"),
-                "Heat": st.column_config.TextColumn("Heat", width="small"),
-                "Lane": st.column_config.TextColumn("Lane", width="small"),
-                "Event": st.column_config.TextColumn("Event", width="medium"),
-                "Target +/-": st.column_config.TextColumn("Target +/-", width="large")
-            }
-            
-            st.dataframe(swim_df[display_cols], hide_index=True, use_container_width=True, column_config=parent_col_config)
-                
-    else: 
-        st.info("👈 **Please ask your Team Manager for the 4-Digit Room PIN** and enter it in the sidebar to watch live results.")
