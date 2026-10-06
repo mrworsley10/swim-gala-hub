@@ -74,47 +74,47 @@ st.markdown("""
         color: #94a3b8;
     }
 
-    /* --- EXISTING HEADER CSS --- */
-    .modern-header {
-        background-color: #0b0b0b;
-        border-radius: 12px;
-        padding: 25px 30px;
-        margin-top: 10px;
-        display: flex;
-        justify-content: space-between;
+    /* --- MOBILE-FRIENDLY MODERN HEADER --- */
+    .app-header {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         align-items: center;
-    }
-    .modern-header h1 {
-        color: #ffffff !important;
-        margin: 0;
-        font-size: 1.8em;
-        font-weight: 800;
-        letter-spacing: 0.5px;
-    }
-    .modern-header .club-name {
-        color: #facc15;
-        font-weight: 700;
-        font-size: 1.2em;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-    }
-    .dashed-divider {
-        border-top: 6px dashed #facc15;
-        margin: 15px 0 25px 0;
-        opacity: 0.9;
-    }
-    .status-pill {
-        background-color: #fef08a;
-        color: #854d0e !important;
-        padding: 5px 12px;
-        border-radius: 15px;
-        font-size: 0.85em;
-        font-weight: 700;
-        display: inline-block;
+        padding: 15px 0px;
+        margin-top: 10px;
+        border-bottom: 2px solid #334155;
         margin-bottom: 20px;
-        border: 1px solid #fde047;
     }
-    .status-dot { color: #16a34a; margin-right: 5px; }
+    .header-left {
+        text-align: left;
+    }
+    .header-right {
+        text-align: right;
+    }
+    .view-title {
+        color: #facc15;
+        font-weight: 800;
+        font-size: clamp(1rem, 2.5vw, 1.4rem);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin: 0;
+        line-height: 1.2;
+    }
+    .meet-name {
+        color: #ffffff;
+        font-weight: 700;
+        font-size: clamp(0.9rem, 2vw, 1.2rem);
+        margin: 0;
+        line-height: 1.2;
+    }
+    .sync-status {
+        font-size: clamp(0.7rem, 1.5vw, 0.85rem);
+        margin-top: 4px;
+        font-weight: 600;
+    }
+    .sync-live { color: #4ade80; }
+    .sync-offline { color: #94a3b8; }
+
+    /* KPI Cards */
     .kpi-container { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
     .kpi-card {
         flex: 1;
@@ -153,22 +153,24 @@ if "last_url" not in st.session_state:
 st.sidebar.title("Navigation")
 page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM])
 
-# --- DYNAMIC HEADER INJECTION ---
-if page_selection == VIEW_COACH: banner_title = "🏊‍♂ COACH'S CLIPBOARD"
-elif page_selection == VIEW_WALL: banner_title = "📋 SWIMMER WALL PLANNER"
-else: banner_title = "🚩 TEAM MANAGER TRACKER"
+# --- DYNAMIC APP HEADER ---
+if page_selection == VIEW_COACH: icon_title = "⏱ COACH"
+elif page_selection == VIEW_WALL: icon_title = "📋 PLANNER"
+else: icon_title = "🚩 TRACKER"
 
-pin_display = f"<div style='color: #4ade80; font-size: 0.85em; margin-top: 4px;'>🟢 Live Room: {st.session_state['room_pin']}</div>" if st.session_state["room_pin"] else "<div style='color: #ccc; font-size: 0.85em; margin-top: 4px;'>Offline Mode</div>"
+sync_class = "sync-live" if st.session_state["room_pin"] else "sync-offline"
+sync_text = f"🟢 Room: {st.session_state['room_pin']}" if st.session_state["room_pin"] else "⚪ Offline"
 
 st.markdown(f"""
-<div class="modern-header">
-    <div><div class="club-name">{banner_title}</div></div>
-    <div style="text-align: right;">
-        <h1>{st.session_state['meet_name']}</h1>
-        {pin_display}
+<div class="app-header">
+    <div class="header-left">
+        <div class="view-title">{icon_title}</div>
+    </div>
+    <div class="header-right">
+        <div class="meet-name">{st.session_state['meet_name']}</div>
+        <div class="sync-status {sync_class}">{sync_text}</div>
     </div>
 </div>
-<div class="dashed-divider"></div>
 """, unsafe_allow_html=True)
 
 
@@ -671,13 +673,13 @@ elif page_selection == VIEW_WALL:
         club_display = f"{club_filter.upper()} " if club_filter.strip() else ""
         header_meet = f" — {st.session_state['meet_name']}" if st.session_state["meet_name"] else ""
         
-        # Regex function to strip out the "Female 09 Yrs/Over" bloat
+        # Updated Regex function to catch "Breaststrok" cutoff bug
         def clean_event_name(e_str):
             m1 = re.search(r'EVENT\s+(\d+)', str(e_str), re.IGNORECASE)
             m2 = re.search(r'(\d+m\s+[A-Za-z]+(?:\s+IM)?)', str(e_str), re.IGNORECASE)
             if m1 and m2:
                 stroke = m2.group(1).title()
-                stroke = stroke.replace('Breaststroke', 'Breast')
+                stroke = stroke.replace('Breaststroke', 'Breast').replace('Breaststrok', 'Breast')
                 stroke = stroke.replace('Freestyle', 'Free')
                 stroke = stroke.replace('Backstroke', 'Back')
                 stroke = stroke.replace('Butterfly', 'Fly')
