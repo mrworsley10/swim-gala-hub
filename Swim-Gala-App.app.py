@@ -404,8 +404,8 @@ def parse_results_scraper(url, current_swimmers):
             if frame.get('src'): pages_to_scrape.append(urljoin(url, frame.get('src')))
             
         sub_links = []
-        # Keywords that indicate a start list, entry list, or split time page
-        exclude_keywords = ['split', 'stlist', 'start', 'entry', 'ent']
+        # Removed 'ent' because it blocked 'event' files. Only exact prefixes are excluded now.
+        exclude_keywords = ['split', 'stlist', 'start', 'entry']
         
         for p_url in list(pages_to_scrape):
             try:
