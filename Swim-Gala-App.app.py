@@ -294,6 +294,16 @@ else:
                 else:
                     st.sidebar.error(f"Upload Failed: {err}")
                     st.session_state["gala_df"] = original_df
+                    
+    if st.sidebar.button("🚨 Wipe All Cloud Rooms"):
+        with st.spinner("Clearing database..."):
+            try:
+                supabase.table("live_gala_data").delete().gt("id", 0).execute()
+                st.session_state["room_pin"] = None
+                st.session_state["gala_df"] = pd.DataFrame()
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Failed to clear database: {e}")
 
 # --- CONFIGURATION & SETTINGS ---
 st.sidebar.divider()
@@ -368,26 +378,44 @@ def parse_html_soup(soup, club_keyword):
             tds = elem.find_all(['td', 'th'])
             cells = [td.get_text(strip=True) for td in tds]
             row_text = " ".join(cells)
+            
             if not target_keyword or target_keyword in row_text.lower():
-                lane, name, age, entry_time = None, None, "", "N/A"
-                for c in cells:
-                    if c.isdigit() and 7 <= int(c) <= 25 and not age: age = c
-                if len(cells) >= 6:
-                    lane, name = cells[0], cells[2]
-                    for c in cells[3:5]:
-                        if c.isdigit() and 7 <= int(c) <= 25:
-                            age = c; break
-                    entry_time = cells[5]
-                elif len(cells) == 5:
-                    lane = cells[0]
-                    if cells[1].isdigit(): name, entry_time = cells[2], cells[4] if target_keyword and target_keyword not in cells[4].lower() else "N/A"
-                    else: name, entry_time = cells[1], cells[4]
-                elif len(cells) == 4:
-                    lane, name = cells[0], cells[1]
-                if lane and lane.isdigit() and is_valid_swimmer_name(name):
+                if not cells or not cells[0].strip().isdigit(): continue
+                lane = cells[0].strip()
+                
+                name = ""
+                for c in cells[1:]:
+                    c_clean = c.strip()
+                    if is_valid_swimmer_name(c_clean):
+                        # Skip if this string matches the club name rather than the swimmer's name
+                        if target_keyword and target_keyword.lower() in c_clean.lower():
+                            continue
+                        name = c_clean.title()
+                        break
+                
+                age = ""
+                for c in cells[1:]:
+                    c_clean = c.strip()
+                    if c_clean.isdigit() and 7 <= int(c_clean) <= 99:
+                        age = c_clean
+                        break
+                        
+                entry_time = "N/A"
+                # Scan backwards to ensure we only grab valid times, rejecting text/club names
+                for c in reversed(cells):
+                    c_clean = c.strip()
+                    if not c_clean: continue
+                    if time_to_seconds(c_clean) is not None or c_clean.upper() in ["NT", "S/T", "NONE"]:
+                        entry_time = c_clean
+                        break
+                    # If we see the club keyword while moving left, it means the time is entirely missing
+                    if target_keyword and target_keyword.lower() in c_clean.lower():
+                        break
+                        
+                if name and lane:
                     sess_num = infer_session_number(current_event, current_session)
                     entries.append({
-                        "Session": sess_num, "Swimmer": name.title(), "Age": age, "Event": current_event,
+                        "Session": sess_num, "Swimmer": name, "Age": age, "Event": current_event,
                         "Heat": int(current_heat) if current_heat.isdigit() else current_heat, "Lane": int(lane),
                         "Entry Time": entry_time, "Achieved Time": "", "Var vs Entry": "", "Coach Notes": "",
                         "Checked In": False, "Checked Out": False, "Seen Coach": False, "In Marshalling": False
