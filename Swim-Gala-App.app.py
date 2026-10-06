@@ -389,7 +389,7 @@ def parse_text_lines(lines, club_keyword):
     return entries
 
 def parse_results_scraper(url, current_swimmers):
-    """Scrapes official results using explicit column header indexing and includes HDW heat result files."""
+    """Scrapes official results and maps them securely to BOTH Swimmer Name and Event Number."""
     results_map = {}
     try:
         known_swimmers = {s.lower().strip() for s in current_swimmers}
@@ -413,7 +413,6 @@ def parse_results_scraper(url, current_swimmers):
                 for a in p_soup.find_all('a', href=True):
                     full_url = urljoin(p_url, a['href'])
                     href_lower = a['href'].lower()
-                    # Allow heat/result files to process HDW events properly. Exclude split lists.
                     if urlparse(full_url).netloc == urlparse(url).netloc and full_url not in visited_urls and href_lower.endswith(('.htm', '.html')) and 'split' not in href_lower and 'entry' not in href_lower and 'ent' not in href_lower:
                         sub_links.append(full_url)
                         visited_urls.add(full_url)
@@ -424,13 +423,25 @@ def parse_results_scraper(url, current_swimmers):
         for link in all_pages:
             try:
                 link_soup = BeautifulSoup(fetch_url_content(link).text, 'html.parser')
+                page_text = link_soup.get_text(separator=" ")
+                
+                # EXTRACT EVENT NUMBER SO WE NEVER OVERWRITE ANOTHER RACE
+                event_match = re.search(r'Event\s+(\d+)', page_text, re.IGNORECASE)
+                if not event_match:
+                    url_match = re.search(r'(?:event|result|heat)0*(\d+)', link.lower())
+                    if url_match:
+                        event_num = int(url_match.group(1))
+                    else:
+                        continue
+                else:
+                    event_num = int(event_match.group(1))
+                
                 for table in link_soup.find_all('table'):
                     rows = table.find_all('tr')
                     if not rows: continue
                     
                     place_idx, name_idx, time_idx = None, None, None
                     
-                    # Detect header positions dynamically by scanning the first few rows
                     for tr in rows[:5]:
                         headers = [td.get_text(strip=True).lower() for td in tr.find_all(['td', 'th'])]
                         for idx, h in enumerate(headers):
@@ -438,9 +449,8 @@ def parse_results_scraper(url, current_swimmers):
                             elif h in ['name', 'swimmer']: name_idx = idx
                             elif h == 'time': time_idx = idx
                         if name_idx is not None and time_idx is not None:
-                            break # Found the headers!
+                            break 
                             
-                    # Fallback if headers aren't explicitly found but table is wide enough
                     if name_idx is None: name_idx = 1
                     if place_idx is None: place_idx = 0
                     if time_idx is None: time_idx = 4
@@ -456,9 +466,8 @@ def parse_results_scraper(url, current_swimmers):
                                 clean_place = place_raw.replace('.', '').strip()
                                 name_title = name_raw.title()
                                 
-                                # Because age group results are lower down the page, 
-                                # they will naturally overwrite earlier physical heat placements.
-                                results_map[name_title] = {"place": clean_place, "time": time_raw}
+                                # Assign result to the specific Event Number AND Name
+                                results_map[(event_num, name_title)] = {"place": clean_place, "time": time_raw}
             except: continue
     except:
         pass
@@ -737,8 +746,12 @@ elif page_selection == VIEW_RESULTS:
                         current_swimmer_names = df_final["Swimmer"].unique().tolist()
                         scraped_results = parse_results_scraper(st.session_state["last_url"], current_swimmer_names)
                         updates = 0
-                        for swimmer, data in scraped_results.items():
-                            mask = st.session_state["gala_df"]["Swimmer"] == swimmer
+                        
+                        # Use the combined key (event_number, swimmer_name) to assign results correctly
+                        for (event_num, swimmer), data in scraped_results.items():
+                            # Match BOTH the Swimmer's Name AND the Event Number
+                            mask = (st.session_state["gala_df"]["Swimmer"] == swimmer) & (st.session_state["gala_df"]["Event"].apply(get_event_num) == event_num)
+                            
                             if mask.any():
                                 st.session_state["gala_df"].loc[mask, "Official Place"] = data["place"]
                                 
