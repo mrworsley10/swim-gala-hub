@@ -703,6 +703,19 @@ if page_selection == VIEW_COACH:
         """, unsafe_allow_html=True)
         
         sessions = sorted(df_final["Session"].unique())
+        
+        # --- UI COLUMN CONFIGURATION (COACH VIEW) ---
+        coach_col_config = {
+            "Heat": st.column_config.Column(width="small"),
+            "Lane": st.column_config.Column(width="small"),
+            "Age": st.column_config.Column(width="small"),
+            "Entry Time": st.column_config.Column(width="small"),
+            "Achieved Time": st.column_config.Column(width="small"),
+            "Swimmer": st.column_config.Column(width="medium"),
+            "Target +/-": st.column_config.Column(width="large"),
+            "Coach Notes": st.column_config.Column(width="large")
+        }
+
         for sess in sessions:
             st.markdown(f"<h3 style='margin-top: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px; color:var(--text-color);'>Session {sess} Input</h3>", unsafe_allow_html=True)
             sess_df = df_final[df_final["Session"] == sess]
@@ -770,6 +783,7 @@ if page_selection == VIEW_COACH:
                         event_df[display_cols],
                         key=editor_key,
                         disabled=disabled_cols,
+                        column_config=coach_col_config,
                         hide_index=True,
                         use_container_width=True
                     )
@@ -857,6 +871,24 @@ elif page_selection == VIEW_TM:
     st.markdown("Track swimmer movement split by **Session**. All swimmers in an event see **Coach** at event call time (-20 mins); **Marshalling** is calculated per individual **Heat** (-10 mins).")
     
     if not df_final.empty:
+        # --- UI COLUMN CONFIGURATION (TM VIEW) ---
+        tm_rc_config = {
+            "Swimmer": st.column_config.Column(width="medium"),
+            "Age": st.column_config.Column(width="small")
+        }
+        
+        tm_event_config = {
+            "Heat": st.column_config.Column(width="small"),
+            "Lane": st.column_config.Column(width="small"),
+            "Swimmer": st.column_config.Column(width="medium"),
+            "Age": st.column_config.Column(width="small"),
+            "Coach Time": st.column_config.Column(width="small"),
+            "Marshalling Time": st.column_config.Column(width="small"),
+            "Est. Race Time": st.column_config.Column(width="small"),
+            "Seen Coach": st.column_config.CheckboxColumn("Seen Coach?", width="small"),
+            "In Marshalling": st.column_config.CheckboxColumn("In Marshalling?", width="small")
+        }
+
         sessions = sorted(df_final["Session"].unique())
         for sess in sessions:
             st.markdown(f"<h3 style='margin-top: 30px; border-bottom: 2px solid #eee; padding-bottom: 10px; color:var(--text-color);'>Session {sess}</h3>", unsafe_allow_html=True)
@@ -865,7 +897,14 @@ elif page_selection == VIEW_TM:
             roll_call_df = sess_df.drop_duplicates(subset=["Swimmer"])[["Swimmer", "Age", "Checked In", "Checked Out"]].sort_values("Swimmer")
             with st.expander(f"📝 Session {sess} Swimmer Roll Call ({roll_call_df['Checked In'].sum()} / {len(roll_call_df)} Arrived)", expanded=True):
                 rc_editor_key = f"rollcall_s{sess}_{st.session_state['redraw_counter']}"
-                edited_rc = st.data_editor(roll_call_df, key=rc_editor_key, disabled=["Swimmer", "Age"], hide_index=True, use_container_width=True)
+                edited_rc = st.data_editor(
+                    roll_call_df, 
+                    key=rc_editor_key, 
+                    disabled=["Swimmer", "Age"], 
+                    column_config=tm_rc_config,
+                    hide_index=True, 
+                    use_container_width=True
+                )
                 rc_changes = False
                 for _, row in edited_rc.iterrows():
                     swimmer = row["Swimmer"]
@@ -896,10 +935,12 @@ elif page_selection == VIEW_TM:
                 with st.expander(f"🏊 {event} — Event Starts ~{first_row['Est. Race Time']} | Coach Call: {first_row['Coach Time']} ({len(event_df)} Swimmers)", expanded=True):
                     editor_key = f"editor_tm_s{sess}_{event}_{st.session_state['redraw_counter']}"
                     edited_tm_df = st.data_editor(
-                        event_df[display_cols], key=editor_key,
+                        event_df[display_cols], 
+                        key=editor_key,
                         disabled=["Heat", "Lane", "Swimmer", "Age", "Coach Time", "Marshalling Time", "Est. Race Time"],
-                        column_config={"Seen Coach": st.column_config.CheckboxColumn("Seen Coach?"), "In Marshalling": st.column_config.CheckboxColumn("In Marshalling?")},
-                        hide_index=True, use_container_width=True
+                        column_config=tm_event_config,
+                        hide_index=True, 
+                        use_container_width=True
                     )
                     changes_made_tm = False
                     for _, edited_row in edited_tm_df.iterrows():
