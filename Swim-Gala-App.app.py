@@ -62,6 +62,18 @@ st.markdown("""
         font-weight: 800 !important;
     }
 
+    /* --- MOBILE TABLE OPTIMIZATION --- */
+    table {
+        white-space: nowrap !important;
+        width: 100%;
+        font-size: 0.9em;
+    }
+    th {
+        font-size: 0.85em;
+        text-transform: uppercase;
+        color: #94a3b8;
+    }
+
     /* --- EXISTING HEADER CSS --- */
     .modern-header {
         background-color: #0b0b0b;
@@ -661,12 +673,16 @@ elif page_selection == VIEW_WALL:
         
         # Regex function to strip out the "Female 09 Yrs/Over" bloat
         def clean_event_name(e_str):
-            m1 = re.search(r'(EVENT\s+\d+)', str(e_str), re.IGNORECASE)
+            m1 = re.search(r'EVENT\s+(\d+)', str(e_str), re.IGNORECASE)
             m2 = re.search(r'(\d+m\s+[A-Za-z]+(?:\s+IM)?)', str(e_str), re.IGNORECASE)
             if m1 and m2:
-                # Title case the stroke, but keep the "m" lowercase
-                stroke = m2.group(1).title().replace('M ', 'm ').replace(' Im', ' IM')
-                return f"{m1.group(1).upper()} - {stroke}"
+                stroke = m2.group(1).title()
+                stroke = stroke.replace('Breaststroke', 'Breast')
+                stroke = stroke.replace('Freestyle', 'Free')
+                stroke = stroke.replace('Backstroke', 'Back')
+                stroke = stroke.replace('Butterfly', 'Fly')
+                stroke = stroke.replace('M ', 'm ').replace(' Im', ' IM')
+                return f"#{m1.group(1)} {stroke}"
             return str(e_str).strip(' -')
 
         ui_output = f"## {club_display}GALA SCHEDULE{header_meet.upper()} — SWIMMER A–Z\n\n"
@@ -678,7 +694,7 @@ elif page_selection == VIEW_WALL:
                 
                 # Mobile-friendly markdown table for the screen
                 ui_output += f"\n### 👤 {current_swimmer} *(Age: {row.get('Age', 'N/A')})*\n"
-                ui_output += "| Session | Event | Heat & Lane | Entry | Marshalling | Est. Race |\n"
+                ui_output += "| Sess | Event | H/L | Entry | Call | Race |\n"
                 ui_output += "| :--- | :--- | :--- | :--- | :--- | :--- |\n"
                 
                 # Clean text layout for the printed download
@@ -686,11 +702,10 @@ elif page_selection == VIEW_WALL:
                 dl_output += "-" * 65 + "\n"
                 
             clean_evt = clean_event_name(row['Event'])
-            hl_ui = f"Heat {row['Heat']}, Lane {row['Lane']}"
-            hl_dl = f"H{row['Heat']}, L{row['Lane']}"
+            hl_ui = f"H{row['Heat']}/L{row['Lane']}"
             
             ui_output += f"| {row['Session']} | {clean_evt} | {hl_ui} | {row['Entry Time']} | **{row['Marshalling Time']}** | {row['Est. Race Time']} |\n"
-            dl_output += f"Sess {row['Session']} | {clean_evt:<30} | {hl_dl:<8} | Entry: {row['Entry Time']:<8} | Marsh: {row['Marshalling Time']:<5} | Race: {row['Est. Race Time']}\n"
+            dl_output += f"Sess {row['Session']} | {clean_evt:<18} | {hl_ui:<7} | Entry: {row['Entry Time']:<8} | Call: {row['Marshalling Time']:<5} | Race: {row['Est. Race Time']}\n"
             
         st.markdown(ui_output)
         st.download_button("📄 Download Printable Schedule (.txt)", dl_output, "gala_wall_schedule.txt", "text/plain")
