@@ -389,14 +389,13 @@ def parse_text_lines(lines, club_keyword):
     return entries
 
 def parse_results_scraper(url, current_swimmers):
-    """Scrapes official results based ONLY on known swimmer names, completely bypassing abbreviation bugs."""
+    """Scrapes official results using explicit column header indexing and ignores split/heat files."""
     results_map = {}
     try:
-        # Create a lowercase set of our swimmers for easy matching
         known_swimmers = {s.lower().strip() for s in current_swimmers}
-        
         visited_urls = set()
         pages_to_scrape = [url]
+        
         resp = fetch_url_content(url)
         visited_urls.add(url)
         soup = BeautifulSoup(resp.text, 'html.parser')
@@ -413,39 +412,51 @@ def parse_results_scraper(url, current_swimmers):
                 
                 for a in p_soup.find_all('a', href=True):
                     full_url = urljoin(p_url, a['href'])
-                    if urlparse(full_url).netloc == urlparse(url).netloc and full_url not in visited_urls and a['href'].lower().endswith(('.htm', '.html')):
+                    href_lower = a['href'].lower()
+                    # Filter out split/heat/entry files to prevent overwriting results with split times
+                    if urlparse(full_url).netloc == urlparse(url).netloc and full_url not in visited_urls and href_lower.endswith(('.htm', '.html')) and not any(x in href_lower for x in ['split', 'heat', 'ent', 'entry']):
                         sub_links.append(full_url)
                         visited_urls.add(full_url)
             except: continue
             
-        # Parse all found links
-        for link in sub_links:
+        all_pages = [p for p in pages_to_scrape if not any(x in p.lower() for x in ['split', 'heat', 'ent', 'entry'])] + sub_links
+        
+        for link in all_pages:
             try:
                 link_soup = BeautifulSoup(fetch_url_content(link).text, 'html.parser')
-                # Find all tables. We want to process rows.
-                for tr in link_soup.find_all('tr'):
-                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-                    if len(cells) >= 4:
-                        place_raw = cells[0].strip()
-                        # Check if first cell is a placement number or DQ
-                        if re.match(r'^(\d+)', place_raw) or place_raw in ['DQ', 'DNC']:
-                            clean_place = place_raw.replace('.', '').strip()
+                for table in link_soup.find_all('table'):
+                    rows = table.find_all('tr')
+                    if not rows: continue
+                    
+                    place_idx, name_idx, time_idx = None, None, None
+                    
+                    # Detect header positions dynamically
+                    for tr in rows[:3]:
+                        headers = [td.get_text(strip=True).lower() for td in tr.find_all(['td', 'th'])]
+                        for idx, h in enumerate(headers):
+                            if h in ['place', 'pos', 'pl']: place_idx = idx
+                            elif h in ['name', 'swimmer']: name_idx = idx
+                            elif h == 'time': time_idx = idx
                             
-                            # Grab time from the end
-                            time_str = ""
-                            for c in reversed(cells):
-                                if re.search(r'\d[\d\:\.]+', c):
-                                    time_str = c
-                                    break
-                                    
-                            # Check if row belongs to one of our known swimmers
-                            for cell in cells:
-                                if cell.strip().lower() in known_swimmers:
-                                    name = cell.strip().title()
-                                    # Because age group results are lower down the page, 
-                                    # this naturally overwrites the heat result with the true medal result.
-                                    results_map[name] = {"place": clean_place, "time": time_str}
-                                    break
+                    if name_idx is None: name_idx = 1
+                    if place_idx is None: place_idx = 0
+                    if time_idx is None: time_idx = 4
+                    
+                    for tr in rows:
+                        cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+                        if len(cells) > max(place_idx, name_idx, time_idx):
+                            place_raw = cells[place_idx].strip()
+                            name_raw = cells[name_idx].strip()
+                            time_raw = cells[time_idx].strip()
+                            
+                            if (re.match(r'^(\d+)', place_raw) or place_raw in ['DQ', 'DNC']) and name_raw.lower() in known_swimmers:
+                                clean_place = place_raw.replace('.', '').strip()
+                                name_title = name_raw.title()
+                                
+                                time_match = re.search(r'\d[\d\:\.]+', time_raw)
+                                final_time = time_match.group(0) if time_match else time_raw
+                                
+                                results_map[name_title] = {"place": clean_place, "time": final_time}
             except: continue
     except:
         pass
@@ -721,7 +732,6 @@ elif page_selection == VIEW_RESULTS:
             if st.session_state.get("last_url"):
                 if st.button("🔄 Auto-Fetch Results from Web"):
                     with st.spinner("Scanning website for official placements and times..."):
-                        # Get a list of the exact swimmer names in our clipboard to avoid abbreviation bugs
                         current_swimmer_names = df_final["Swimmer"].unique().tolist()
                         scraped_results = parse_results_scraper(st.session_state["last_url"], current_swimmer_names)
                         updates = 0
@@ -755,15 +765,12 @@ elif page_selection == VIEW_RESULTS:
             
             for event in events:
                 event_df = sess_df[sess_df["Event"] == event]
-                # Only show events where at least one person has an Official Place or Achieved Time
                 if not event_df[event_df["Official Place"] != ""].empty or not event_df[event_df["Achieved Time"] != ""].empty:
                     st.markdown(f"#### 🏊 {event}")
                     
                     ages = sorted(event_df["Age"].unique())
                     for age in ages:
                         age_df = event_df[event_df["Age"] == age]
-                        
-                        # Sort to put 1st place at the top
                         age_df = age_df.sort_values(by="Official Place", key=lambda x: pd.to_numeric(x, errors='coerce'))
                         
                         for _, row in age_df.iterrows():
@@ -774,7 +781,6 @@ elif page_selection == VIEW_RESULTS:
                             elif place == "3": badge_class += " place-3"
                             
                             place_display = f"<span class='{badge_class}'>{place if place else '-'}</span>"
-                            
                             time_display = row["Achieved Time"] if row["Achieved Time"] else "Pending..."
                             
                             st.markdown(f"**Age {age}** | {place_display} — **{row['Swimmer']}** (Time: {time_display})", unsafe_allow_html=True)
