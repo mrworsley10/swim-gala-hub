@@ -213,17 +213,6 @@ def extract_standard_event(event_str):
         return stroke.strip()
     return ""
 
-def format_target_col(target_time, base_sec):
-    if pd.isna(target_time) or str(target_time).strip() == "":
-        return ""
-    t_sec = time_to_seconds(target_time)
-    if t_sec is None: 
-        return ""
-    var_str = calculate_variance(base_sec, t_sec) if base_sec is not None else ""
-    if var_str and var_str != "N/A":
-        return f"{target_time} ({var_str})"
-    return f"{target_time}"
-
 # --- CLOUD DATABASE FUNCTIONS ---
 def create_room(df):
     pin = str(random.randint(1000, 9999))
@@ -278,6 +267,7 @@ def safe_update_db(row_id, field, value):
             supabase.table("live_gala_data").update({field: value}).eq("id", int(row_id)).execute()
         except Exception:
             pass
+
 
 # --- CLOUD SYNC SIDEBAR ---
 st.sidebar.divider()
@@ -359,7 +349,6 @@ if target_file is not None:
         st.sidebar.error("Error reading CSV file.")
 else:
     st.session_state["target_df"] = pd.DataFrame()
-
 
 # --- CONFIGURATION & SETTINGS ---
 st.sidebar.divider()
@@ -723,39 +712,61 @@ if page_selection == VIEW_COACH:
                 event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"]).copy()
                 with st.expander(f"🏊 {event} ({len(event_df)} Swimmers)", expanded=True):
                     
-                    display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Coach Notes"]
                     disabled_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time"]
+                    county_col, reg_col, race_res_col = [], [], []
+                    
+                    has_targets = not st.session_state["target_df"].empty
+                    target_df = st.session_state["target_df"]
 
-                    # Dynamically inject the Target Times if the file is loaded
-                    if not st.session_state["target_df"].empty:
-                        target_df = st.session_state["target_df"]
-                        county_col, reg_col = [], []
+                    # Calculate dynamic target columns and Post-Race Analysis
+                    for _, r in event_df.iterrows():
+                        ach_sec = time_to_seconds(r['Achieved Time'])
+                        ent_sec = time_to_seconds(r['Entry Time'])
+                        c_sec, r_sec = None, None
                         
-                        for _, r in event_df.iterrows():
+                        if has_targets:
                             g = extract_gender(r['Event'])
                             a = safe_int(r['Age'], -1)
                             e = extract_standard_event(r['Event'])
-                            
                             match = target_df[(target_df['Gender'] == g) & (target_df['Age'] == a) & (target_df['Event'].str.lower() == e.lower())]
                             
                             c_time = match.iloc[0].get('County_Time', "") if not match.empty and pd.notna(match.iloc[0].get('County_Time')) else ""
                             r_time = match.iloc[0].get('Regional_Time', "") if not match.empty and pd.notna(match.iloc[0].get('Regional_Time')) else ""
                             
-                            ach_sec = time_to_seconds(r['Achieved Time'])
-                            ent_sec = time_to_seconds(r['Entry Time'])
+                            c_sec = time_to_seconds(c_time) if c_time else None
+                            r_sec = time_to_seconds(r_time) if r_time else None
                             
-                            # Base variance off Achieved Time, but default to Entry Time if race hasn't happened yet
-                            base_sec = ach_sec if ach_sec is not None else ent_sec
+                            c_ent_var = calculate_variance(ent_sec, c_sec) if ent_sec and c_sec else ""
+                            r_ent_var = calculate_variance(ent_sec, r_sec) if ent_sec and r_sec else ""
                             
-                            county_col.append(format_target_col(c_time, base_sec))
-                            reg_col.append(format_target_col(r_time, base_sec))
+                            county_col.append(f"{c_time} (Entry: {c_ent_var})" if c_ent_var and c_ent_var != "N/A" else f"{c_time}")
+                            reg_col.append(f"{r_time} (Entry: {r_ent_var})" if r_ent_var and r_ent_var != "N/A" else f"{r_time}")
                             
+                        if ach_sec is not None:
+                            ent_ach_var = calculate_variance(ach_sec, ent_sec) if ent_sec else ""
+                            res = []
+                            if ent_ach_var and ent_ach_var != "N/A": res.append(f"Entry: {ent_ach_var}")
+                            
+                            if has_targets:
+                                c_ach_var = calculate_variance(ach_sec, c_sec) if c_sec else ""
+                                r_ach_var = calculate_variance(ach_sec, r_sec) if r_sec else ""
+                                if c_ach_var and c_ach_var != "N/A": res.append(f"Cty: {c_ach_var}")
+                                if r_ach_var and r_ach_var != "N/A": res.append(f"Reg: {r_ach_var}")
+                                
+                            race_res_col.append(" | ".join(res) if res else "Race Logged")
+                        else:
+                            race_res_col.append("⏳ Awaiting Race")
+
+                    event_df["Post-Race Analysis"] = race_res_col
+                    
+                    if has_targets:
                         event_df["County Target"] = county_col
                         event_df["Regional Target"] = reg_col
-                        
-                        # Display targets between Entry Time and Achieved Time
-                        display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "County Target", "Regional Target", "Achieved Time", "Coach Notes"]
-                        disabled_cols.extend(["County Target", "Regional Target"])
+                        display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "County Target", "Regional Target", "Achieved Time", "Post-Race Analysis", "Coach Notes"]
+                        disabled_cols.extend(["County Target", "Regional Target", "Post-Race Analysis"])
+                    else:
+                        display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Post-Race Analysis", "Coach Notes"]
+                        disabled_cols.append("Post-Race Analysis")
 
                     editor_key = f"editor_coach_s{sess}_{event}_{st.session_state['redraw_counter']}"
                     
