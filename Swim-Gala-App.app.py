@@ -389,7 +389,7 @@ def parse_text_lines(lines, club_keyword):
     return entries
 
 def parse_results_scraper(url, current_swimmers):
-    """Scrapes official results and maps them securely to BOTH Swimmer Name and Event Number."""
+    """STRICT Scraper: Blocks start lists entirely. Requires explicitly labeled Result tables."""
     results_map = {}
     try:
         known_swimmers = {s.lower().strip() for s in current_swimmers}
@@ -404,6 +404,9 @@ def parse_results_scraper(url, current_swimmers):
             if frame.get('src'): pages_to_scrape.append(urljoin(url, frame.get('src')))
             
         sub_links = []
+        # Keywords that indicate a start list, entry list, or split time page
+        exclude_keywords = ['split', 'stlist', 'start', 'entry', 'ent']
+        
         for p_url in list(pages_to_scrape):
             try:
                 p_resp = fetch_url_content(p_url)
@@ -413,19 +416,21 @@ def parse_results_scraper(url, current_swimmers):
                 for a in p_soup.find_all('a', href=True):
                     full_url = urljoin(p_url, a['href'])
                     href_lower = a['href'].lower()
-                    if urlparse(full_url).netloc == urlparse(url).netloc and full_url not in visited_urls and href_lower.endswith(('.htm', '.html')) and 'split' not in href_lower and 'entry' not in href_lower and 'ent' not in href_lower:
-                        sub_links.append(full_url)
-                        visited_urls.add(full_url)
+                    if urlparse(full_url).netloc == urlparse(url).netloc and full_url not in visited_urls and href_lower.endswith(('.htm', '.html')):
+                        # Block links that point to start lists or splits
+                        if not any(x in href_lower for x in exclude_keywords):
+                            sub_links.append(full_url)
+                            visited_urls.add(full_url)
             except: continue
             
-        all_pages = [p for p in pages_to_scrape if 'split' not in p.lower()] + sub_links
+        # Combine pages and explicitly filter exclusions again just to be safe
+        all_pages = [p for p in pages_to_scrape if not any(x in p.lower() for x in exclude_keywords)] + sub_links
         
         for link in all_pages:
             try:
                 link_soup = BeautifulSoup(fetch_url_content(link).text, 'html.parser')
                 page_text = link_soup.get_text(separator=" ")
                 
-                # EXTRACT EVENT NUMBER SO WE NEVER OVERWRITE ANOTHER RACE
                 event_match = re.search(r'Event\s+(\d+)', page_text, re.IGNORECASE)
                 if not event_match:
                     url_match = re.search(r'(?:event|result|heat)0*(\d+)', link.lower())
@@ -441,19 +446,24 @@ def parse_results_scraper(url, current_swimmers):
                     if not rows: continue
                     
                     place_idx, name_idx, time_idx = None, None, None
+                    valid_results_table = False
                     
+                    # STRICT HEADER VALIDATION: The table MUST contain 'Place' and 'Time'
                     for tr in rows[:5]:
                         headers = [td.get_text(strip=True).lower() for td in tr.find_all(['td', 'th'])]
                         for idx, h in enumerate(headers):
                             if h in ['place', 'pos', 'pl']: place_idx = idx
                             elif h in ['name', 'swimmer']: name_idx = idx
                             elif h == 'time': time_idx = idx
-                        if name_idx is not None and time_idx is not None:
+                        
+                        if name_idx is not None and place_idx is not None and time_idx is not None:
+                            valid_results_table = True
                             break 
                             
-                    if name_idx is None: name_idx = 1
-                    if place_idx is None: place_idx = 0
-                    if time_idx is None: time_idx = 4
+                    # If this table doesn't have Place and Time headers, SKIP IT. 
+                    # This prevents Start Lists (Lane & Entry Time) from being read as Results.
+                    if not valid_results_table:
+                        continue
                     
                     for tr in rows:
                         cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
@@ -466,7 +476,6 @@ def parse_results_scraper(url, current_swimmers):
                                 clean_place = place_raw.replace('.', '').strip()
                                 name_title = name_raw.title()
                                 
-                                # Assign result to the specific Event Number AND Name
                                 results_map[(event_num, name_title)] = {"place": clean_place, "time": time_raw}
             except: continue
     except:
@@ -747,9 +756,7 @@ elif page_selection == VIEW_RESULTS:
                         scraped_results = parse_results_scraper(st.session_state["last_url"], current_swimmer_names)
                         updates = 0
                         
-                        # Use the combined key (event_number, swimmer_name) to assign results correctly
                         for (event_num, swimmer), data in scraped_results.items():
-                            # Match BOTH the Swimmer's Name AND the Event Number
                             mask = (st.session_state["gala_df"]["Swimmer"] == swimmer) & (st.session_state["gala_df"]["Event"].apply(get_event_num) == event_num)
                             
                             if mask.any():
