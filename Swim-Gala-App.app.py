@@ -140,32 +140,6 @@ st.markdown("""
     .kpi-val.red { color: #ef4444 !important; }
     .kpi-val.orange { color: #f97316 !important; }
     .kpi-label { font-size: 0.75em; color: gray !important; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
-    
-    /* --- SCOREBOARD FEED --- */
-    .scoreboard-container {
-        background-color: #0b0b0b;
-        border: 2px solid #334155;
-        border-radius: 10px;
-        padding: 15px;
-        max-height: 550px;
-        overflow-y: auto;
-    }
-    .score-item {
-        background-color: #1e293b;
-        border-left: 5px solid #facc15;
-        padding: 12px 15px;
-        margin-bottom: 10px;
-        border-radius: 6px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .score-left { flex: 2; }
-    .score-right { flex: 1; text-align: right; }
-    .score-name { font-size: 1.1em; font-weight: bold; color: #fff; margin-bottom: 4px; }
-    .score-event { font-size: 0.85em; color: #94a3b8; }
-    .score-time { font-size: 1.4em; font-weight: 900; color: #4ade80; }
-    .score-var { font-size: 0.85em; color: #cbd5e1; margin-top: 4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1063,73 +1037,37 @@ elif page_selection == VIEW_PARENT:
         has_targets = not st.session_state["target_df"].empty
         target_df = st.session_state["target_df"]
         
-        tab1, tab2 = st.tabs(["🔍 Individual Swimmer Search", "🏟️ Live Action Scoreboard"])
+        st.markdown("### 🔍 Individual Swimmer Search")
+        swimmer_list = sorted(df_final["Swimmer"].unique())
+        selected_swimmer = st.selectbox("Search for a Swimmer:", [""] + swimmer_list)
         
-        # --- TAB 1: SWIMMER SEARCH ---
-        with tab1:
-            swimmer_list = sorted(df_final["Swimmer"].unique())
-            selected_swimmer = st.selectbox("Search for a Swimmer:", [""] + swimmer_list)
+        if selected_swimmer:
+            swim_df = df_final[df_final["Swimmer"] == selected_swimmer].copy()
             
-            if selected_swimmer:
-                swim_df = df_final[df_final["Swimmer"] == selected_swimmer].copy()
-                
-                # Apply the centralized Target calculation logic so it matches the Coach View perfectly
-                swim_df["Target +/-"] = swim_df.apply(lambda r: get_target_analysis(r, target_df, has_targets), axis=1)
-                
-                # Convert numbers to strings for clean left-alignment
-                swim_df["Heat"] = swim_df["Heat"].astype(str)
-                swim_df["Lane"] = swim_df["Lane"].astype(str)
-                
-                total_races = len(swim_df)
-                done_races = len(swim_df[swim_df["Achieved Time"] != ""])
-                
-                st.markdown(f"### 👤 Report Card: {selected_swimmer} <span style='font-size: 0.6em; color: gray;'>(Age: {swim_df.iloc[0]['Age']})</span>", unsafe_allow_html=True)
-                st.markdown(f"**Progress:** {done_races} / {total_races} Races Completed")
-                
-                display_cols = ["Session", "Event", "Heat", "Lane", "Entry Time", "Achieved Time", "Target +/-", "Coach Notes"]
-                
-                parent_col_config = {
-                    "Session": st.column_config.TextColumn("Sess", width="small"),
-                    "Heat": st.column_config.TextColumn("Heat", width="small"),
-                    "Lane": st.column_config.TextColumn("Lane", width="small"),
-                    "Event": st.column_config.TextColumn("Event", width="medium"),
-                    "Target +/-": st.column_config.TextColumn("Target +/-", width="large")
-                }
-                
-                st.dataframe(swim_df[display_cols], hide_index=True, use_container_width=True, column_config=parent_col_config)
-                
-        # --- TAB 2: LIVE SCOREBOARD FEED ---
-        with tab2:
-            st.markdown("### 🏟️ Latest Results Feed")
-            st.caption("Automatically sorts by the most recently scheduled events. Hit 'Refresh Live Data' in the sidebar to load the newest times.")
+            # Apply the centralized Target calculation logic so it matches the Coach View perfectly
+            swim_df["Target +/-"] = swim_df.apply(lambda r: get_target_analysis(r, target_df, has_targets), axis=1)
             
-            results_df = df_final[df_final["Achieved Time"] != ""].copy()
+            # Convert numbers to strings for clean left-alignment
+            swim_df["Heat"] = swim_df["Heat"].astype(str)
+            swim_df["Lane"] = swim_df["Lane"].astype(str)
             
-            if results_df.empty:
-                st.info("No race times have been logged by the coaches yet. Check back soon!")
-            else:
-                # Sort descending by Session, then Event Number, then Heat so the latest races are always at the top of the feed
-                results_df["_evt_num"] = results_df["Event"].apply(get_event_num)
-                results_df = results_df.sort_values(by=["Session", "_evt_num", "_sort_heat", "_sort_lane"], ascending=[False, False, False, True])
-                
-                html_feed = '<div class="scoreboard-container">'
-                for _, r in results_df.iterrows():
-                    analysis_text = get_target_analysis(r, target_df, has_targets)
-                    html_feed += f'''
-                    <div class="score-item">
-                        <div class="score-left">
-                            <div class="score-name">{r["Swimmer"]} <span style="font-size:0.8em; font-weight:normal; color:#94a3b8;">(Age {r["Age"]})</span></div>
-                            <div class="score-event">Sess {r["Session"]} | {r["Event"]} | H{r["Heat"]} L{r["Lane"]}</div>
-                        </div>
-                        <div class="score-right">
-                            <div class="score-time">{r["Achieved Time"]}</div>
-                            <div class="score-var">{analysis_text}</div>
-                        </div>
-                    </div>
-                    '''
-                html_feed += '</div>'
-                
-                st.markdown(html_feed, unsafe_allow_html=True)
+            total_races = len(swim_df)
+            done_races = len(swim_df[swim_df["Achieved Time"] != ""])
+            
+            st.markdown(f"### 👤 Report Card: {selected_swimmer} <span style='font-size: 0.6em; color: gray;'>(Age: {swim_df.iloc[0]['Age']})</span>", unsafe_allow_html=True)
+            st.markdown(f"**Progress:** {done_races} / {total_races} Races Completed")
+            
+            display_cols = ["Session", "Event", "Heat", "Lane", "Entry Time", "Achieved Time", "Target +/-", "Coach Notes"]
+            
+            parent_col_config = {
+                "Session": st.column_config.TextColumn("Sess", width="small"),
+                "Heat": st.column_config.TextColumn("Heat", width="small"),
+                "Lane": st.column_config.TextColumn("Lane", width="small"),
+                "Event": st.column_config.TextColumn("Event", width="medium"),
+                "Target +/-": st.column_config.TextColumn("Target +/-", width="large")
+            }
+            
+            st.dataframe(swim_df[display_cols], hide_index=True, use_container_width=True, column_config=parent_col_config)
                 
     else: 
         st.info("👈 **Please ask your Team Manager for the 4-Digit Room PIN** and enter it in the sidebar to watch live results.")
