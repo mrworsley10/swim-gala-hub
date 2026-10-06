@@ -602,7 +602,6 @@ else:
 if page_selection == VIEW_COACH:
     
     if not df_final.empty:
-        # Dynamic KPI Calculation for DQs and DNCs
         achieved_upper = df_final["Achieved Time"].astype(str).str.upper()
         notes_upper = df_final["Coach Notes"].astype(str).str.upper()
 
@@ -612,13 +611,11 @@ if page_selection == VIEW_COACH:
         dq_count = int(is_dq.sum())
         dnc_count = int(is_dnc.sum())
 
-        # Clean successfully completed swims
         recorded_swims = df_final[(df_final["Achieved Time"] != "") & (~is_dnc) & (~is_dq)]
         swims_done = len(recorded_swims)
         total_swims = len(df_final)
         faster_count = df_final["Var vs Entry"].str.startswith("✅").sum()
         
-        # Calculate true remaining swims
         swims_remaining = max(0, total_swims - swims_done - dq_count - dnc_count)
         current_time_str = datetime.now().strftime("%H:%M")
         
@@ -753,7 +750,7 @@ elif page_selection == VIEW_TM:
                     if row["Checked In"] != st.session_state["gala_df"].loc[mask, "Checked In"].iloc[0]:
                         st.session_state["gala_df"].loc[mask, "Checked In"] = row["Checked In"]
                         if st.session_state["room_pin"]:
-                            try: supabase.table("live_gala_data").update({"checked_in": bool(row["Checked In"])}).eq("room_pin", st.session_state["room_pin"]).eq("session", sess).eq swimmer).execute()
+                            try: supabase.table("live_gala_data").update({"checked_in": bool(row["Checked In"])}).eq("room_pin", st.session_state["room_pin"]).eq("session", sess).eq("swimmer", swimmer).execute()
                             except: pass
                         rc_changes = True
                     if row["Checked Out"] != st.session_state["gala_df"].loc[mask, "Checked Out"].iloc[0]:
