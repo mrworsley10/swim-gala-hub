@@ -710,15 +710,16 @@ if page_selection == VIEW_COACH:
         sessions = sorted(df_final["Session"].unique())
         
         # --- UI COLUMN CONFIGURATION (COACH VIEW) ---
+        # Using TextColumn forces Streamlit to left-align the data instead of right-aligning pure numbers
         coach_col_config = {
-            "Heat": st.column_config.Column(width="small"),
-            "Lane": st.column_config.Column(width="small"),
-            "Age": st.column_config.Column(width="small"),
-            "Entry Time": st.column_config.Column(width="small"),
-            "Achieved Time": st.column_config.Column(width="small"),
-            "Swimmer": st.column_config.Column(width="medium"),
-            "Target +/-": st.column_config.Column(width="large"),
-            "Coach Notes": st.column_config.Column(width="large")
+            "Heat": st.column_config.TextColumn("Heat", width="small"),
+            "Lane": st.column_config.TextColumn("Lane", width="small"),
+            "Age": st.column_config.TextColumn("Age", width="small"),
+            "Entry Time": st.column_config.TextColumn("Entry Time", width="medium"),
+            "Achieved Time": st.column_config.TextColumn("Achieved Time", width="medium"),
+            "Swimmer": st.column_config.TextColumn("Swimmer", width="medium"),
+            "Target +/-": st.column_config.TextColumn("Target +/-", width="large"),
+            "Coach Notes": st.column_config.TextColumn("Coach Notes", width="large")
         }
 
         for sess in sessions:
@@ -728,6 +729,12 @@ if page_selection == VIEW_COACH:
             
             for event in events:
                 event_df = sess_df[sess_df["Event"] == event].sort_values(by=["_sort_heat", "_sort_lane"]).copy()
+                
+                # Convert numbers to strings before display so Streamlit left-aligns them automatically
+                event_df["Heat"] = event_df["Heat"].astype(str)
+                event_df["Lane"] = event_df["Lane"].astype(str)
+                event_df["Age"] = event_df["Age"].astype(str)
+
                 with st.expander(f"🏊 {event} ({len(event_df)} Swimmers)", expanded=True):
                     
                     analysis_col = []
@@ -795,7 +802,7 @@ if page_selection == VIEW_COACH:
                     
                     changes_made = False
                     for _, edited_row in edited_event_df.iterrows():
-                        mask = (st.session_state["gala_df"]["Session"] == sess) & (st.session_state["gala_df"]["Event"] == event) & (st.session_state["gala_df"]["Swimmer"] == edited_row["Swimmer"]) & (st.session_state["gala_df"]["Heat"] == edited_row["Heat"])
+                        mask = (st.session_state["gala_df"]["Session"] == sess) & (st.session_state["gala_df"]["Event"] == event) & (st.session_state["gala_df"]["Swimmer"] == edited_row["Swimmer"]) & (st.session_state["gala_df"]["Heat"].astype(str) == edited_row["Heat"])
                         
                         curr_achieved = str(st.session_state["gala_df"].loc[mask, "Achieved Time"].values[0])
                         curr_notes = str(st.session_state["gala_df"].loc[mask, "Coach Notes"].values[0])
@@ -878,18 +885,18 @@ elif page_selection == VIEW_TM:
     if not df_final.empty:
         # --- UI COLUMN CONFIGURATION (TM VIEW) ---
         tm_rc_config = {
-            "Swimmer": st.column_config.Column(width="medium"),
-            "Age": st.column_config.Column(width="small")
+            "Swimmer": st.column_config.TextColumn("Swimmer", width="medium"),
+            "Age": st.column_config.TextColumn("Age", width="small")
         }
         
         tm_event_config = {
-            "Heat": st.column_config.Column(width="small"),
-            "Lane": st.column_config.Column(width="small"),
-            "Swimmer": st.column_config.Column(width="medium"),
-            "Age": st.column_config.Column(width="small"),
-            "Coach Time": st.column_config.Column(width="small"),
-            "Marshalling Time": st.column_config.Column(width="small"),
-            "Est. Race Time": st.column_config.Column(width="small"),
+            "Heat": st.column_config.TextColumn("Heat", width="small"),
+            "Lane": st.column_config.TextColumn("Lane", width="small"),
+            "Swimmer": st.column_config.TextColumn("Swimmer", width="medium"),
+            "Age": st.column_config.TextColumn("Age", width="small"),
+            "Coach Time": st.column_config.TextColumn("Coach Time", width="small"),
+            "Marshalling Time": st.column_config.TextColumn("Marshalling Time", width="small"),
+            "Est. Race Time": st.column_config.TextColumn("Est. Race Time", width="small"),
             "Seen Coach": st.column_config.CheckboxColumn("Seen Coach?", width="small"),
             "In Marshalling": st.column_config.CheckboxColumn("In Marshalling?", width="small")
         }
@@ -900,6 +907,8 @@ elif page_selection == VIEW_TM:
             sess_df = df_final[df_final["Session"] == sess]
             
             roll_call_df = sess_df.drop_duplicates(subset=["Swimmer"])[["Swimmer", "Age", "Checked In", "Checked Out"]].sort_values("Swimmer")
+            roll_call_df["Age"] = roll_call_df["Age"].astype(str)
+
             with st.expander(f"📝 Session {sess} Swimmer Roll Call ({roll_call_df['Checked In'].sum()} / {len(roll_call_df)} Arrived)", expanded=True):
                 rc_editor_key = f"rollcall_s{sess}_{st.session_state['redraw_counter']}"
                 edited_rc = st.data_editor(
@@ -933,7 +942,13 @@ elif page_selection == VIEW_TM:
 
             events = sorted(sess_df["Event"].unique(), key=get_event_num)
             for event in events:
-                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["_sort_heat", "_sort_lane"])
+                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["_sort_heat", "_sort_lane"]).copy()
+                
+                # Convert numbers to strings to force left alignment
+                event_df["Heat"] = event_df["Heat"].astype(str)
+                event_df["Lane"] = event_df["Lane"].astype(str)
+                event_df["Age"] = event_df["Age"].astype(str)
+
                 display_cols = ["Heat", "Lane", "Swimmer", "Age", "Coach Time", "Seen Coach", "Marshalling Time", "In Marshalling", "Est. Race Time"]
                 first_row = event_df.iloc[0] if not event_df.empty else None
                 
@@ -949,7 +964,7 @@ elif page_selection == VIEW_TM:
                     )
                     changes_made_tm = False
                     for _, edited_row in edited_tm_df.iterrows():
-                        mask = (st.session_state["gala_df"]["Session"] == sess) & (st.session_state["gala_df"]["Event"] == event) & (st.session_state["gala_df"]["Swimmer"] == edited_row["Swimmer"]) & (st.session_state["gala_df"]["Heat"] == edited_row["Heat"])
+                        mask = (st.session_state["gala_df"]["Session"] == sess) & (st.session_state["gala_df"]["Event"] == event) & (st.session_state["gala_df"]["Swimmer"] == edited_row["Swimmer"]) & (st.session_state["gala_df"]["Heat"].astype(str) == edited_row["Heat"])
                         if edited_row["Seen Coach"] != st.session_state["gala_df"].loc[mask, "Seen Coach"].values[0]:
                             st.session_state["gala_df"].loc[mask, "Seen Coach"] = edited_row["Seen Coach"]
                             if st.session_state["room_pin"] and "id" in st.session_state["gala_df"].columns:
