@@ -76,13 +76,16 @@ st.markdown("""
 
     /* --- MOBILE-FRIENDLY MODERN HEADER --- */
     .app-header {
+        background-color: #0b0b0b;
+        border-radius: 12px;
+        padding: 20px 25px;
         display: grid;
         grid-template-columns: 1fr 1fr;
         align-items: center;
-        padding: 15px 0px;
         margin-top: 10px;
-        border-bottom: 2px solid #334155;
         margin-bottom: 20px;
+        border-bottom: 4px solid #facc15;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }
     .header-left {
         text-align: left;
@@ -91,7 +94,7 @@ st.markdown("""
         text-align: right;
     }
     .view-title {
-        color: #facc15;
+        color: #facc15 !important;
         font-weight: 800;
         font-size: clamp(1rem, 2.5vw, 1.4rem);
         text-transform: uppercase;
@@ -100,7 +103,7 @@ st.markdown("""
         line-height: 1.2;
     }
     .meet-name {
-        color: #ffffff;
+        color: #ffffff !important;
         font-weight: 700;
         font-size: clamp(0.9rem, 2vw, 1.2rem);
         margin: 0;
@@ -111,8 +114,8 @@ st.markdown("""
         margin-top: 4px;
         font-weight: 600;
     }
-    .sync-live { color: #4ade80; }
-    .sync-offline { color: #94a3b8; }
+    .sync-live { color: #4ade80 !important; }
+    .sync-offline { color: #94a3b8 !important; }
 
     /* KPI Cards */
     .kpi-container { display: flex; gap: 15px; margin-bottom: 25px; flex-wrap: wrap; }
@@ -673,7 +676,6 @@ elif page_selection == VIEW_WALL:
         club_display = f"{club_filter.upper()} " if club_filter.strip() else ""
         header_meet = f" — {st.session_state['meet_name']}" if st.session_state["meet_name"] else ""
         
-        # Updated Regex function to catch "Breaststrok" cutoff bug
         def clean_event_name(e_str):
             m1 = re.search(r'EVENT\s+(\d+)', str(e_str), re.IGNORECASE)
             m2 = re.search(r'(\d+m\s+[A-Za-z]+(?:\s+IM)?)', str(e_str), re.IGNORECASE)
@@ -694,12 +696,10 @@ elif page_selection == VIEW_WALL:
             if row["Swimmer"] != current_swimmer:
                 current_swimmer = row["Swimmer"]
                 
-                # Mobile-friendly markdown table for the screen
                 ui_output += f"\n### 👤 {current_swimmer} *(Age: {row.get('Age', 'N/A')})*\n"
                 ui_output += "| Sess | Event | H/L | Entry | Call | Race |\n"
                 ui_output += "| :--- | :--- | :--- | :--- | :--- | :--- |\n"
                 
-                # Clean text layout for the printed download
                 dl_output += f"\n{current_swimmer.upper()} (Age: {row.get('Age', 'N/A')})\n"
                 dl_output += "-" * 65 + "\n"
                 
