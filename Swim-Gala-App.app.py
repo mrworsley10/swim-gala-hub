@@ -11,10 +11,11 @@ import urllib3
 import random
 from supabase import create_client, Client
 
-# --- DEFINE PAGE NAMES GLOBALLY TO PREVENT EMOJI MISMATCHES ---
+# --- DEFINE PAGE NAMES GLOBALLY ---
 VIEW_COACH = "⏱ Coach Race Info"
 VIEW_WALL = "📋 Swimmer Wall Planner"
 VIEW_TM = "🚩 TM Marshalling Info"
+VIEW_RESULTS = "🏆 Official Results"
 
 # Streamlit Page Setup
 st.set_page_config(page_title="Swim Gala Hub", layout="wide")
@@ -34,8 +35,6 @@ except Exception as e:
 # --- MODERN CUSTOM CSS ---
 st.markdown("""
 <style>
-    /* Removed the stHeader and stToolbar hacks so the sidebar toggle always works safely */
-    
     .modern-header {
         background-color: #0b0b0b;
         border-radius: 12px;
@@ -95,6 +94,16 @@ st.markdown("""
     }
     .kpi-val.green { color: #4ade80 !important; }
     .kpi-label { font-size: 0.75em; color: gray !important; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+    .place-badge {
+        font-weight: bold;
+        padding: 2px 8px;
+        border-radius: 4px;
+        background-color: #334155;
+        color: white;
+    }
+    .place-1 { background-color: #fbbf24; color: black; }
+    .place-2 { background-color: #94a3b8; color: black; }
+    .place-3 { background-color: #b45309; color: white; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -107,14 +116,17 @@ if "redraw_counter" not in st.session_state:
     st.session_state["redraw_counter"] = 0
 if "room_pin" not in st.session_state:
     st.session_state["room_pin"] = None
+if "last_url" not in st.session_state:
+    st.session_state["last_url"] = ""
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM])
+page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM, VIEW_RESULTS])
 
 # --- DYNAMIC HEADER INJECTION ---
 if page_selection == VIEW_COACH: banner_title = "🏊‍♂ COACH'S CLIPBOARD"
 elif page_selection == VIEW_WALL: banner_title = "📋 SWIMMER WALL PLANNER"
+elif page_selection == VIEW_RESULTS: banner_title = "🏆 CLUB RESULTS"
 else: banner_title = "🚩 TEAM MANAGER TRACKER"
 
 pin_display = f"<div style='color: #4ade80; font-size: 0.85em; margin-top: 4px;'>🟢 Live Room: {st.session_state['room_pin']}</div>" if st.session_state["room_pin"] else "<div style='color: #ccc; font-size: 0.85em; margin-top: 4px;'>Offline Mode</div>"
@@ -164,11 +176,11 @@ def create_room(df):
             "checked_in": safe_bool(row.get("Checked In")),
             "checked_out": safe_bool(row.get("Checked Out")),
             "seen_coach": safe_bool(row.get("Seen Coach")),
-            "in_marshalling": safe_bool(row.get("In Marshalling"))
+            "in_marshalling": safe_bool(row.get("In Marshalling")),
+            "official_place": safe_str(row.get("Official Place"))
         })
         
     try:
-        # Batch insert to avoid database limits
         batch_size = 100
         for i in range(0, len(records), batch_size):
             supabase.table("live_gala_data").insert(records[i:i+batch_size]).execute()
@@ -186,7 +198,7 @@ def fetch_room(pin):
             "session": "Session", "swimmer": "Swimmer", "age": "Age", "event": "Event",
             "heat": "Heat", "lane": "Lane", "entry_time": "Entry Time", "achieved_time": "Achieved Time",
             "coach_notes": "Coach Notes", "checked_in": "Checked In", "checked_out": "Checked Out",
-            "seen_coach": "Seen Coach", "in_marshalling": "In Marshalling"
+            "seen_coach": "Seen Coach", "in_marshalling": "In Marshalling", "official_place": "Official Place"
         })
         return df
     except Exception as e:
@@ -229,11 +241,10 @@ else:
                 else:
                     st.sidebar.error("Invalid PIN or empty room.")
                     
-    # The protected upload button
     if not st.session_state["gala_df"].empty and "id" not in st.session_state["gala_df"].columns:
         if st.sidebar.button("☁️ Upload Gala to Cloud"):
             with st.spinner("Scrubbing data & creating secure room..."):
-                original_df = st.session_state["gala_df"].copy() # Backup local data
+                original_df = st.session_state["gala_df"].copy()
                 pin, err = create_room(st.session_state["gala_df"])
                 
                 if pin:
@@ -244,10 +255,10 @@ else:
                         st.rerun()
                     else:
                         st.sidebar.error("Upload succeeded, but could not read the data back.")
-                        st.session_state["gala_df"] = original_df # Restore backup
+                        st.session_state["gala_df"] = original_df 
                 else:
                     st.sidebar.error(f"Upload Failed: {err}")
-                    st.session_state["gala_df"] = original_df # Restore backup
+                    st.session_state["gala_df"] = original_df
 
 # --- CONFIGURATION & SETTINGS ---
 st.sidebar.divider()
@@ -344,7 +355,8 @@ def parse_html_soup(soup, club_keyword):
                         "Session": sess_num, "Swimmer": name.title(), "Age": age, "Event": current_event,
                         "Heat": int(current_heat) if current_heat.isdigit() else current_heat, "Lane": int(lane),
                         "Entry Time": entry_time, "Achieved Time": "", "Var vs Entry": "", "Coach Notes": "",
-                        "Checked In": False, "Checked Out": False, "Seen Coach": False, "In Marshalling": False
+                        "Checked In": False, "Checked Out": False, "Seen Coach": False, "In Marshalling": False,
+                        "Official Place": ""
                     })
     return entries
 
@@ -371,9 +383,65 @@ def parse_text_lines(lines, club_keyword):
                         "Session": sess_num, "Swimmer": name.title(), "Age": age, "Event": current_event,
                         "Heat": int(current_heat) if current_heat.isdigit() else current_heat, "Lane": int(lane),
                         "Entry Time": entry_time, "Achieved Time": "", "Var vs Entry": "", "Coach Notes": "",
-                        "Checked In": False, "Checked Out": False, "Seen Coach": False, "In Marshalling": False
+                        "Checked In": False, "Checked Out": False, "Seen Coach": False, "In Marshalling": False,
+                        "Official Place": ""
                     })
     return entries
+
+def parse_results_scraper(url, club_keyword):
+    """Scrapes official results and returns a dictionary of Swimmer -> Place"""
+    results_map = {}
+    try:
+        visited_urls = set()
+        pages_to_scrape = [url]
+        resp = fetch_url_content(url)
+        visited_urls.add(url)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        for frame in soup.find_all(['frame', 'iframe']):
+            if frame.get('src'): pages_to_scrape.append(urljoin(url, frame.get('src')))
+            
+        sub_links = []
+        for p_url in list(pages_to_scrape):
+            try:
+                p_resp = fetch_url_content(p_url)
+                visited_urls.add(p_url)
+                p_soup = BeautifulSoup(p_resp.text, 'html.parser')
+                
+                # Heuristic finding swimmers and their placement numbers
+                for tr in p_soup.find_all('tr'):
+                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+                    if len(cells) >= 4:
+                        place = cells[0]
+                        if re.match(r'^\d+', place): # If first cell is a number (Placement)
+                            for cell in cells:
+                                if is_valid_swimmer_name(cell) and (not club_keyword or club_keyword.lower() in " ".join(cells).lower()):
+                                    results_map[cell.title()] = place
+                                    break
+                                    
+                for a in p_soup.find_all('a', href=True):
+                    full_url = urljoin(p_url, a['href'])
+                    if urlparse(full_url).netloc == urlparse(url).netloc and full_url not in visited_urls and a['href'].lower().endswith(('.htm', '.html')):
+                        sub_links.append(full_url)
+                        visited_urls.add(full_url)
+            except: continue
+            
+        for link in sub_links:
+            try:
+                link_soup = BeautifulSoup(fetch_url_content(link).text, 'html.parser')
+                for tr in link_soup.find_all('tr'):
+                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+                    if len(cells) >= 4:
+                        place = cells[0]
+                        if re.match(r'^\d+', place):
+                            for cell in cells:
+                                if is_valid_swimmer_name(cell) and (not club_keyword or club_keyword.lower() in " ".join(cells).lower()):
+                                    results_map[cell.title()] = place
+                                    break
+            except: continue
+    except:
+        pass
+    return results_map
 
 def time_to_seconds(t_str):
     if not t_str or str(t_str).strip().upper() in ["N/A", "S/T", "NT", "", "-", "—", "NONE"]: return None
@@ -479,8 +547,9 @@ def compute_gala_schedule_times(df_input, session_starts, pace):
 # --- DATA FETCHING ---
 parsed_entries = []
 if input_method == "Web Link (URL)":
-    url_input = st.sidebar.text_input("SPORTSYSTEMS Live URL")
+    url_input = st.sidebar.text_input("SPORTSYSTEMS Live URL", value=st.session_state["last_url"])
     if url_input and st.sidebar.button("Fetch & Process Web Link"):
+        st.session_state["last_url"] = url_input
         try:
             visited_urls = set()
             pages_to_scrape = [url_input]
@@ -535,6 +604,7 @@ df = st.session_state["gala_df"]
 if not df.empty:
     if "Checked In" not in df.columns: df["Checked In"] = False
     if "Checked Out" not in df.columns: df["Checked Out"] = False
+    if "Official Place" not in df.columns: df["Official Place"] = ""
     df_with_variances = populate_variances(df)
     df_final = compute_gala_schedule_times(df_with_variances, session_start_map, pace_factor)
 else:
@@ -569,13 +639,13 @@ if page_selection == VIEW_COACH:
             for event in events:
                 event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"])
                 with st.expander(f"🏊 {event} ({len(event_df)} Swimmers)", expanded=True):
-                    display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Var vs Entry", "Coach Notes"]
+                    display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Official Place", "Coach Notes"]
                     editor_key = f"editor_coach_s{sess}_{event}_{st.session_state['redraw_counter']}"
                     
                     edited_event_df = st.data_editor(
                         event_df[display_cols],
                         key=editor_key,
-                        disabled=["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Var vs Entry"],
+                        disabled=["Heat", "Lane", "Swimmer", "Age", "Entry Time"],
                         hide_index=True,
                         use_container_width=True
                     )
@@ -586,11 +656,15 @@ if page_selection == VIEW_COACH:
                         
                         curr_achieved = str(st.session_state["gala_df"].loc[mask, "Achieved Time"].values[0])
                         curr_notes = str(st.session_state["gala_df"].loc[mask, "Coach Notes"].values[0])
+                        curr_place = str(st.session_state["gala_df"].loc[mask, "Official Place"].values[0])
                         
                         raw_ach = str(edited_row["Achieved Time"]) if pd.notna(edited_row["Achieved Time"]) else ""
                         new_notes = str(edited_row["Coach Notes"]) if pd.notna(edited_row["Coach Notes"]) else ""
+                        new_place = str(edited_row["Official Place"]) if pd.notna(edited_row["Official Place"]) else ""
+                        
                         if raw_ach.lower() in ["none", "nan"]: raw_ach = ""
                         if new_notes.lower() in ["none", "nan"]: new_notes = ""
+                        if new_place.lower() in ["none", "nan"]: new_place = ""
                         
                         formatted_ach = format_time_input(raw_ach)
                         
@@ -606,11 +680,80 @@ if page_selection == VIEW_COACH:
                                 safe_update_db(st.session_state["gala_df"].loc[mask, "id"].values[0], "coach_notes", new_notes)
                             changes_made = True
                             
+                        if new_place != curr_place:
+                            st.session_state["gala_df"].loc[mask, "Official Place"] = new_place
+                            if st.session_state["room_pin"] and "id" in st.session_state["gala_df"].columns:
+                                safe_update_db(st.session_state["gala_df"].loc[mask, "id"].values[0], "official_place", new_place)
+                            changes_made = True
+                            
                     if changes_made:
                         st.session_state['redraw_counter'] += 1
                         st.rerun()
 
     else: st.info("👈 **Please load your gala meet data** from the sidebar first.")
+
+
+# --- VIEW 4: OFFICIAL RESULTS LEADERBOARD ---
+elif page_selection == VIEW_RESULTS:
+    if not df_final.empty:
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown("Easily view all swimmer placements grouped by Event and Age Category.")
+        with col2:
+            if st.session_state.get("last_url"):
+                if st.button("🔄 Auto-Fetch Results from Web"):
+                    with st.spinner("Scanning website for official placements..."):
+                        scraped_results = parse_results_scraper(st.session_state["last_url"], club_filter)
+                        updates = 0
+                        for swimmer, place in scraped_results.items():
+                            mask = st.session_state["gala_df"]["Swimmer"] == swimmer
+                            if mask.any():
+                                st.session_state["gala_df"].loc[mask, "Official Place"] = place
+                                updates += 1
+                                if st.session_state["room_pin"] and "id" in st.session_state["gala_df"].columns:
+                                    for idx in st.session_state["gala_df"][mask].index:
+                                        safe_update_db(st.session_state["gala_df"].loc[idx, "id"], "official_place", place)
+                        if updates > 0:
+                            st.success(f"✅ Found {updates} official placements!")
+                            st.rerun()
+                        else:
+                            st.info("No new placements found. The website might not be updated yet.")
+                            
+        st.divider()
+
+        sessions = sorted(df_final["Session"].unique())
+        for sess in sessions:
+            sess_df = df_final[df_final["Session"] == sess]
+            events = sorted(sess_df["Event"].unique(), key=get_event_num)
+            
+            for event in events:
+                event_df = sess_df[sess_df["Event"] == event]
+                # Only show events where at least one person has an Official Place or Achieved Time
+                if not event_df[event_df["Official Place"] != ""].empty or not event_df[event_df["Achieved Time"] != ""].empty:
+                    st.markdown(f"#### 🏊 {event}")
+                    
+                    ages = sorted(event_df["Age"].unique())
+                    for age in ages:
+                        age_df = event_df[event_df["Age"] == age]
+                        
+                        # Sort to put 1st place at the top
+                        age_df = age_df.sort_values(by="Official Place", key=lambda x: pd.to_numeric(x, errors='coerce'))
+                        
+                        for _, row in age_df.iterrows():
+                            place = str(row["Official Place"]).strip()
+                            badge_class = "place-badge"
+                            if place == "1": badge_class += " place-1"
+                            elif place == "2": badge_class += " place-2"
+                            elif place == "3": badge_class += " place-3"
+                            
+                            place_display = f"<span class='{badge_class}'>{place if place else '-'}</span>"
+                            
+                            time_display = row["Achieved Time"] if row["Achieved Time"] else "Pending..."
+                            
+                            st.markdown(f"**Age {age}** | {place_display} — **{row['Swimmer']}** (Time: {time_display})", unsafe_allow_html=True)
+                    st.write("")
+    else:
+        st.info("👈 **Please load your gala meet data** from the sidebar first.")
 
 # --- VIEW 2: SWIMMER WALL PLANNER ---
 elif page_selection == VIEW_WALL:
