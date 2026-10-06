@@ -389,7 +389,7 @@ def parse_text_lines(lines, club_keyword):
     return entries
 
 def parse_results_scraper(url, club_keyword):
-    """Scrapes official results and returns a dictionary of Swimmer -> Place"""
+    """Scrapes official results and returns a dictionary of Swimmer -> {'place': X, 'time': Y}"""
     results_map = {}
     try:
         visited_urls = set()
@@ -408,15 +408,26 @@ def parse_results_scraper(url, club_keyword):
                 visited_urls.add(p_url)
                 p_soup = BeautifulSoup(p_resp.text, 'html.parser')
                 
-                # Heuristic finding swimmers and their placement numbers
                 for tr in p_soup.find_all('tr'):
                     cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
                     if len(cells) >= 4:
-                        place = cells[0]
-                        if re.match(r'^\d+', place): # If first cell is a number (Placement)
+                        place_raw = cells[0].strip()
+                        if re.match(r'^(\d+)', place_raw) or place_raw in ['DQ', 'DNC']:
+                            # Strip out periods for cleaner styling
+                            clean_place = place_raw.replace('.', '').strip()
+                            
+                            # Scan backwards to find the achieved time
+                            time_str = ""
+                            for c in reversed(cells):
+                                if re.search(r'\d[\d\:\.]+', c):
+                                    time_str = c
+                                    break
+                                    
                             for cell in cells:
                                 if is_valid_swimmer_name(cell) and (not club_keyword or club_keyword.lower() in " ".join(cells).lower()):
-                                    results_map[cell.title()] = place
+                                    name = cell.title()
+                                    # Always overwrite so we capture the final time/placement on the page
+                                    results_map[name] = {"place": clean_place, "time": time_str}
                                     break
                                     
                 for a in p_soup.find_all('a', href=True):
@@ -432,11 +443,20 @@ def parse_results_scraper(url, club_keyword):
                 for tr in link_soup.find_all('tr'):
                     cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
                     if len(cells) >= 4:
-                        place = cells[0]
-                        if re.match(r'^\d+', place):
+                        place_raw = cells[0].strip()
+                        if re.match(r'^(\d+)', place_raw) or place_raw in ['DQ', 'DNC']:
+                            clean_place = place_raw.replace('.', '').strip()
+                            
+                            time_str = ""
+                            for c in reversed(cells):
+                                if re.search(r'\d[\d\:\.]+', c):
+                                    time_str = c
+                                    break
+                                    
                             for cell in cells:
                                 if is_valid_swimmer_name(cell) and (not club_keyword or club_keyword.lower() in " ".join(cells).lower()):
-                                    results_map[cell.title()] = place
+                                    name = cell.title()
+                                    results_map[name] = {"place": clean_place, "time": time_str}
                                     break
             except: continue
     except:
@@ -579,7 +599,7 @@ if input_method == "Web Link (URL)":
                     except: continue
                 if parsed_entries:
                     st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                    st.session_state["room_pin"] = None  # <-- Kicks out of old room automatically
+                    st.session_state["room_pin"] = None
                     st.rerun()
                 else: st.sidebar.warning("No entries matching your Club Keyword were found.")
             except Exception as e: st.error(f"Could not load web page: {e}")
@@ -595,7 +615,7 @@ elif input_method == "Upload PDF File":
             parsed_entries = parse_text_lines(lines, club_filter)
             if parsed_entries: 
                 st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                st.session_state["room_pin"] = None  # <-- Kicks out of old room automatically
+                st.session_state["room_pin"] = None
                 st.rerun()
 
 elif input_method == "Paste Text / HTML":
@@ -605,7 +625,7 @@ elif input_method == "Paste Text / HTML":
             parsed_entries = parse_text_lines(pasted_text.split("\n"), club_filter)
             if parsed_entries: 
                 st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                st.session_state["room_pin"] = None  # <-- Kicks out of old room automatically
+                st.session_state["room_pin"] = None
                 st.rerun()
 
 # --- DATA COMPILATION ---
@@ -712,19 +732,28 @@ elif page_selection == VIEW_RESULTS:
         with col2:
             if st.session_state.get("last_url"):
                 if st.button("🔄 Auto-Fetch Results from Web"):
-                    with st.spinner("Scanning website for official placements..."):
+                    with st.spinner("Scanning website for official placements and times..."):
                         scraped_results = parse_results_scraper(st.session_state["last_url"], club_filter)
                         updates = 0
-                        for swimmer, place in scraped_results.items():
+                        for swimmer, data in scraped_results.items():
                             mask = st.session_state["gala_df"]["Swimmer"] == swimmer
                             if mask.any():
-                                st.session_state["gala_df"].loc[mask, "Official Place"] = place
+                                # Inject scraped place
+                                st.session_state["gala_df"].loc[mask, "Official Place"] = data["place"]
+                                
+                                # Inject scraped time
+                                time_formatted = format_time_input(data["time"])
+                                if time_formatted:
+                                    st.session_state["gala_df"].loc[mask, "Achieved Time"] = time_formatted
+                                
                                 updates += 1
                                 if st.session_state["room_pin"] and "id" in st.session_state["gala_df"].columns:
                                     for idx in st.session_state["gala_df"][mask].index:
-                                        safe_update_db(st.session_state["gala_df"].loc[idx, "id"], "official_place", place)
+                                        safe_update_db(st.session_state["gala_df"].loc[idx, "id"], "official_place", data["place"])
+                                        if time_formatted:
+                                            safe_update_db(st.session_state["gala_df"].loc[idx, "id"], "achieved_time", time_formatted)
                         if updates > 0:
-                            st.success(f"✅ Found {updates} official placements!")
+                            st.success(f"✅ Found {updates} official placements and times!")
                             st.rerun()
                         else:
                             st.info("No new placements found. The website might not be updated yet.")
