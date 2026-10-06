@@ -147,15 +147,6 @@ if "gala_df" not in st.session_state:
     st.session_state["gala_df"] = pd.DataFrame()
 if "target_df" not in st.session_state:
     st.session_state["target_df"] = pd.DataFrame()
-    # Auto-fetch cloud targets on initial load
-    try:
-        res = supabase.table("target_times").select("*").execute()
-        if res.data:
-            tdf = pd.DataFrame(res.data)
-            tdf = tdf.rename(columns={"gender": "Gender", "age": "Age", "event": "Event", "county_time": "County_Time", "regional_time": "Regional_Time"})
-            st.session_state["target_df"] = tdf
-    except:
-        pass
 if "meet_name" not in st.session_state:
     st.session_state["meet_name"] = "Swim Gala Live"
 if "redraw_counter" not in st.session_state:
@@ -270,6 +261,17 @@ def fetch_room(pin):
         st.error(f"Failed to pull from cloud: {e}")
         return pd.DataFrame()
 
+def fetch_room_targets(pin):
+    try:
+        res = supabase.table("target_times").select("*").eq("room_pin", str(pin)).execute()
+        if res.data:
+            tdf = pd.DataFrame(res.data)
+            tdf = tdf.rename(columns={"gender": "Gender", "age": "Age", "event": "Event", "county_time": "County_Time", "regional_time": "Regional_Time"})
+            return tdf
+    except:
+        pass
+    return pd.DataFrame()
+
 def safe_update_db(row_id, field, value):
     if st.session_state.get("room_pin"):
         try:
@@ -287,19 +289,50 @@ if st.session_state.get("room_pin"):
     if st.sidebar.button("🔄 Refresh Data"):
         with st.spinner("Syncing latest data..."):
             st.session_state["gala_df"] = fetch_room(st.session_state["room_pin"])
-            # Re-fetch targets on refresh
-            try:
-                res = supabase.table("target_times").select("*").execute()
-                if res.data:
-                    tdf = pd.DataFrame(res.data)
-                    tdf = tdf.rename(columns={"gender": "Gender", "age": "Age", "event": "Event", "county_time": "County_Time", "regional_time": "Regional_Time"})
-                    st.session_state["target_df"] = tdf
-            except: pass
+            st.session_state["target_df"] = fetch_room_targets(st.session_state["room_pin"])
         st.rerun()
     if st.sidebar.button("🚪 Disconnect"):
         st.session_state["room_pin"] = None
         st.session_state["gala_df"] = pd.DataFrame()
+        st.session_state["target_df"] = pd.DataFrame()
         st.rerun()
+        
+    # --- ROOM-BOUND TARGET UPLOADER ---
+    st.sidebar.markdown("---")
+    with st.sidebar.expander("🎯 Room Target Times", expanded=False):
+        if not st.session_state["target_df"].empty:
+            st.success(f"{len(st.session_state['target_df'])} Targets Loaded.")
+        else:
+            st.info("No targets loaded for this room.")
+            
+        target_file = st.file_uploader("Upload Club/County Targets (CSV)", type=["csv"])
+        if target_file is not None:
+            if st.button("Link Targets to Room"):
+                with st.spinner("Uploading to room..."):
+                    try:
+                        upload_df = pd.read_csv(target_file)
+                        records = []
+                        for _, r in upload_df.iterrows():
+                            records.append({
+                                "room_pin": st.session_state["room_pin"],
+                                "gender": safe_str(r.get("Gender")),
+                                "age": safe_int(r.get("Age"), -1),
+                                "event": safe_str(r.get("Event")),
+                                "county_time": safe_str(r.get("County_Time")),
+                                "regional_time": safe_str(r.get("Regional_Time"))
+                            })
+                        
+                        # Clear old targets for this specific room, then insert new ones
+                        supabase.table("target_times").delete().eq("room_pin", st.session_state["room_pin"]).execute()
+                        for i in range(0, len(records), 100):
+                            supabase.table("target_times").insert(records[i:i+100]).execute()
+                        
+                        st.session_state["target_df"] = fetch_room_targets(st.session_state["room_pin"])
+                        st.success("Linked! All coaches in this room now see these targets.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Upload failed: {e}")
+
 else:
     st.sidebar.info("Sync across devices by creating or joining a room.")
     join_pin = st.sidebar.text_input("Enter 4-Digit Room PIN")
@@ -310,14 +343,7 @@ else:
                 if not new_df.empty:
                     st.session_state["gala_df"] = new_df
                     st.session_state["room_pin"] = join_pin
-                    # Re-fetch targets upon joining
-                    try:
-                        res = supabase.table("target_times").select("*").execute()
-                        if res.data:
-                            tdf = pd.DataFrame(res.data)
-                            tdf = tdf.rename(columns={"gender": "Gender", "age": "Age", "event": "Event", "county_time": "County_Time", "regional_time": "Regional_Time"})
-                            st.session_state["target_df"] = tdf
-                    except: pass
+                    st.session_state["target_df"] = fetch_room_targets(join_pin)
                     st.rerun()
                 else:
                     st.sidebar.error("Invalid PIN or empty room.")
@@ -333,6 +359,7 @@ else:
                     if not new_df.empty:
                         st.session_state["room_pin"] = pin
                         st.session_state["gala_df"] = new_df
+                        st.session_state["target_df"] = pd.DataFrame()
                         st.rerun()
                     else:
                         st.sidebar.error("Upload succeeded, but could not read the data back.")
@@ -341,7 +368,7 @@ else:
                     st.sidebar.error(f"Upload Failed: {err}")
                     st.session_state["gala_df"] = original_df
 
-# --- ADMIN SECURE WIPER & TARGET UPLOADER ---
+# --- ADMIN SECURE WIPER ---
 st.sidebar.divider()
 with st.sidebar.expander("🔐 Admin Tools"):
     admin_pin = st.text_input("Enter Admin PIN to unlock", type="password")
@@ -349,53 +376,20 @@ with st.sidebar.expander("🔐 Admin Tools"):
     
     if admin_pin == correct_pin:
         st.success("Admin Access Granted")
-        
-        st.markdown("**1. Cloud Targets Manager**")
-        target_file = st.file_uploader("Upload Target Times (CSV) to Cloud", type=["csv"])
-        if target_file is not None:
-            if st.button("Push Targets to Cloud Database"):
-                with st.spinner("Uploading Targets..."):
-                    try:
-                        upload_df = pd.read_csv(target_file)
-                        records = []
-                        for _, r in upload_df.iterrows():
-                            records.append({
-                                "gender": safe_str(r.get("Gender")),
-                                "age": safe_int(r.get("Age"), -1),
-                                "event": safe_str(r.get("Event")),
-                                "county_time": safe_str(r.get("County_Time")),
-                                "regional_time": safe_str(r.get("Regional_Time"))
-                            })
-                        
-                        supabase.table("target_times").delete().gt("id", 0).execute()
-                        for i in range(0, len(records), 100):
-                            supabase.table("target_times").insert(records[i:i+100]).execute()
-                        
-                        # Refresh Local Target State
-                        res = supabase.table("target_times").select("*").execute()
-                        if res.data:
-                            tdf = pd.DataFrame(res.data)
-                            tdf = tdf.rename(columns={"gender": "Gender", "age": "Age", "event": "Event", "county_time": "County_Time", "regional_time": "Regional_Time"})
-                            st.session_state["target_df"] = tdf
-                            
-                        st.success("Target Times uploaded to all cloud users!")
-                    except Exception as e:
-                        st.error(f"Error uploading targets: {e}")
-                        
-        st.markdown("---")
-        st.markdown("**2. Wipe Data Rooms**")
         if st.button("🚨 Wipe All Cloud Rooms"):
-            with st.spinner("Clearing database..."):
+            with st.spinner("Clearing entire database..."):
                 try:
+                    # Wipe both the gala races and all linked target times
                     supabase.table("live_gala_data").delete().gt("id", 0).execute()
+                    supabase.table("target_times").delete().gt("id", 0).execute()
                     st.session_state["room_pin"] = None
                     st.session_state["gala_df"] = pd.DataFrame()
+                    st.session_state["target_df"] = pd.DataFrame()
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to clear database: {e}")
     elif admin_pin:
         st.error("Incorrect PIN")
-
 
 # --- CONFIGURATION & SETTINGS ---
 st.sidebar.divider()
