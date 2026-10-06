@@ -550,53 +550,63 @@ if input_method == "Web Link (URL)":
     url_input = st.sidebar.text_input("SPORTSYSTEMS Live URL", value=st.session_state["last_url"])
     if url_input and st.sidebar.button("Fetch & Process Web Link"):
         st.session_state["last_url"] = url_input
-        try:
-            visited_urls = set()
-            pages_to_scrape = [url_input]
-            resp = fetch_url_content(url_input)
-            visited_urls.add(url_input)
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            meet_name = extract_meet_name_from_soup(soup)
-            if meet_name: st.session_state["meet_name"] = meet_name
-            for frame in soup.find_all(['frame', 'iframe']):
-                if frame.get('src'): pages_to_scrape.append(urljoin(url_input, frame.get('src')))
-            sub_links = []
-            for p_url in list(pages_to_scrape):
-                try:
-                    p_resp = fetch_url_content(p_url)
-                    visited_urls.add(p_url)
-                    p_soup = BeautifulSoup(p_resp.text, 'html.parser')
-                    parsed_entries.extend(parse_html_soup(p_soup, club_filter))
-                    for a in p_soup.find_all('a', href=True):
-                        full_url = urljoin(p_url, a['href'])
-                        if urlparse(full_url).netloc == urlparse(url_input).netloc and full_url not in visited_urls and a['href'].lower().endswith(('.htm', '.html')):
-                            sub_links.append(full_url)
-                            visited_urls.add(full_url)
-                except: continue
-            for link in sub_links:
-                try: parsed_entries.extend(parse_html_soup(BeautifulSoup(fetch_url_content(link).text, 'html.parser'), club_filter))
-                except: continue
-            if parsed_entries:
-                st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                st.rerun()
-            else: st.sidebar.warning("No entries matching your Club Keyword were found.")
-        except Exception as e: st.error(f"Could not load web page: {e}")
+        with st.spinner("Fetching and processing data..."):
+            try:
+                visited_urls = set()
+                pages_to_scrape = [url_input]
+                resp = fetch_url_content(url_input)
+                visited_urls.add(url_input)
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                meet_name = extract_meet_name_from_soup(soup)
+                if meet_name: st.session_state["meet_name"] = meet_name
+                for frame in soup.find_all(['frame', 'iframe']):
+                    if frame.get('src'): pages_to_scrape.append(urljoin(url_input, frame.get('src')))
+                sub_links = []
+                for p_url in list(pages_to_scrape):
+                    try:
+                        p_resp = fetch_url_content(p_url)
+                        visited_urls.add(p_url)
+                        p_soup = BeautifulSoup(p_resp.text, 'html.parser')
+                        parsed_entries.extend(parse_html_soup(p_soup, club_filter))
+                        for a in p_soup.find_all('a', href=True):
+                            full_url = urljoin(p_url, a['href'])
+                            if urlparse(full_url).netloc == urlparse(url_input).netloc and full_url not in visited_urls and a['href'].lower().endswith(('.htm', '.html')):
+                                sub_links.append(full_url)
+                                visited_urls.add(full_url)
+                    except: continue
+                for link in sub_links:
+                    try: parsed_entries.extend(parse_html_soup(BeautifulSoup(fetch_url_content(link).text, 'html.parser'), club_filter))
+                    except: continue
+                if parsed_entries:
+                    st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+                    st.session_state["room_pin"] = None  # <-- Kicks out of old room automatically
+                    st.rerun()
+                else: st.sidebar.warning("No entries matching your Club Keyword were found.")
+            except Exception as e: st.error(f"Could not load web page: {e}")
 
 elif input_method == "Upload PDF File":
     uploaded_file = st.sidebar.file_uploader("Upload Heat Sheet PDF", type=["pdf"])
-    if uploaded_file:
-        lines = []
-        with pdfplumber.open(uploaded_file) as pdf:
-            for page in pdf.pages:
-                if page.extract_text(): lines.extend(page.extract_text().split("\n"))
-        parsed_entries = parse_text_lines(lines, club_filter)
-        if parsed_entries: st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+    if uploaded_file and st.sidebar.button("Process PDF"):
+        with st.spinner("Extracting data from PDF..."):
+            lines = []
+            with pdfplumber.open(uploaded_file) as pdf:
+                for page in pdf.pages:
+                    if page.extract_text(): lines.extend(page.extract_text().split("\n"))
+            parsed_entries = parse_text_lines(lines, club_filter)
+            if parsed_entries: 
+                st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+                st.session_state["room_pin"] = None  # <-- Kicks out of old room automatically
+                st.rerun()
 
 elif input_method == "Paste Text / HTML":
     pasted_text = st.sidebar.text_area("Paste webpage text directly here", height=200)
-    if pasted_text:
-        parsed_entries = parse_text_lines(pasted_text.split("\n"), club_filter)
-        if parsed_entries: st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+    if pasted_text and st.sidebar.button("Process Text"):
+        with st.spinner("Processing pasted text..."):
+            parsed_entries = parse_text_lines(pasted_text.split("\n"), club_filter)
+            if parsed_entries: 
+                st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+                st.session_state["room_pin"] = None  # <-- Kicks out of old room automatically
+                st.rerun()
 
 # --- DATA COMPILATION ---
 df = st.session_state["gala_df"]
