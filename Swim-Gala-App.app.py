@@ -759,10 +759,10 @@ if page_selection == VIEW_COACH:
                             else:
                                 analysis_col.append("⏳ Awaiting")
 
-                    event_df["Race Analysis"] = analysis_col
+                    event_df["Target +/-"] = analysis_col
                     
-                    display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Race Analysis", "Coach Notes"]
-                    disabled_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Race Analysis"]
+                    display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Target +/-", "Coach Notes"]
+                    disabled_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Target +/-"]
 
                     editor_key = f"editor_coach_s{sess}_{event}_{st.session_state['redraw_counter']}"
                     
