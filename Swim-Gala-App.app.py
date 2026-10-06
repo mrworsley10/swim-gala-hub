@@ -374,49 +374,48 @@ def parse_html_soup(soup, club_keyword):
         if event_match and elem.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'p', 'div']: current_event = event_match.group(1).strip()
         heat_match = re.search(r'Heat(?:\s+Number\s*-\s*|\s+)(\d+)', text, re.IGNORECASE)
         if heat_match and elem.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'p', 'div', 'tr']: current_heat = heat_match.group(1)
+        
         if elem.name == 'tr' and current_event is not None:
             tds = elem.find_all(['td', 'th'])
             cells = [td.get_text(strip=True) for td in tds]
             row_text = " ".join(cells)
             
             if not target_keyword or target_keyword in row_text.lower():
-                if not cells or not cells[0].strip().isdigit(): continue
-                lane = cells[0].strip()
+                if not cells: continue
+                lane_str = cells[0].strip()
+                if not lane_str.isdigit(): continue
                 
-                name = ""
-                for c in cells[1:]:
-                    c_clean = c.strip()
-                    if is_valid_swimmer_name(c_clean):
-                        # Skip if this string matches the club name rather than the swimmer's name
-                        if target_keyword and target_keyword.lower() in c_clean.lower():
-                            continue
-                        name = c_clean.title()
-                        break
-                
-                age = ""
-                for c in cells[1:]:
-                    c_clean = c.strip()
-                    if c_clean.isdigit() and 7 <= int(c_clean) <= 99:
-                        age = c_clean
-                        break
-                        
+                # 1. Dynamically scan right-to-left to find the entry time, skipping blank columns
                 entry_time = "N/A"
-                # Scan backwards to ensure we only grab valid times, rejecting text/club names
-                for c in reversed(cells):
-                    c_clean = c.strip()
-                    if not c_clean: continue
-                    if time_to_seconds(c_clean) is not None or c_clean.upper() in ["NT", "S/T", "NONE"]:
-                        entry_time = c_clean
+                for i in range(len(cells)-1, 0, -1):
+                    val = cells[i].strip()
+                    if not val: continue
+                    if re.match(r'^[\d\:\.]+$', val) or val.upper() in ["NT", "S/T", "NONE"]:
+                        entry_time = val
                         break
-                    # If we see the club keyword while moving left, it means the time is entirely missing
-                    if target_keyword and target_keyword.lower() in c_clean.lower():
+                    # If we hit the club name while scanning left, the time is entirely missing
+                    if target_keyword and target_keyword.lower() in val.lower():
                         break
-                        
-                if name and lane:
+
+                # 2. Scan left-to-right to find Name and Age
+                name = ""
+                age = ""
+                for i in range(1, len(cells)):
+                    val = cells[i].strip()
+                    if not val: continue
+                    
+                    if not name and is_valid_swimmer_name(val):
+                        if target_keyword and target_keyword.lower() in val.lower():
+                            continue # Ignore the club name
+                        name = val.title()
+                    elif name and not age and val.isdigit() and 7 <= int(val) <= 99:
+                        age = val
+
+                if name and lane_str.isdigit():
                     sess_num = infer_session_number(current_event, current_session)
                     entries.append({
                         "Session": sess_num, "Swimmer": name, "Age": age, "Event": current_event,
-                        "Heat": int(current_heat) if current_heat.isdigit() else current_heat, "Lane": int(lane),
+                        "Heat": int(current_heat) if current_heat.isdigit() else current_heat, "Lane": int(lane_str),
                         "Entry Time": entry_time, "Achieved Time": "", "Var vs Entry": "", "Coach Notes": "",
                         "Checked In": False, "Checked Out": False, "Seen Coach": False, "In Marshalling": False
                     })
