@@ -570,10 +570,11 @@ def compute_gala_schedule_times(df_input, session_starts, pace):
         events = sorted(sess_df["Event"].unique(), key=get_event_num)
         
         for event in events:
+            # Sort locally using hidden numeric casts to fix string sorting bugs
             event_mask = sess_mask & (calc_df["Event"] == event)
-            event_rows = calc_df[event_mask].sort_values(by=["Heat", "Lane"])
+            event_rows = calc_df[event_mask].sort_values(by=["_sort_heat", "_sort_lane"])
             max_heat = 1
-            try: max_heat = int(event_rows["Heat"].max())
+            try: max_heat = int(event_rows["_sort_heat"].max())
             except: pass
             
             heat_duration_sec = estimate_heat_duration_seconds(event) * pace
@@ -582,7 +583,7 @@ def compute_gala_schedule_times(df_input, session_starts, pace):
             
             for idx, row in event_rows.iterrows():
                 h_num = 1
-                try: h_num = int(row["Heat"])
+                try: h_num = int(row["_sort_heat"])
                 except: pass
                 heat_offset_sec = (h_num - 1) * heat_duration_sec
                 heat_race_dt = current_event_start_dt + timedelta(seconds=heat_offset_sec)
@@ -662,6 +663,10 @@ elif input_method == "Paste Text / HTML":
 df = st.session_state["gala_df"]
 
 if not df.empty:
+    # Fix sorting issue caused by string-based Heat/Lane numbers from the cloud
+    df["_sort_heat"] = pd.to_numeric(df["Heat"], errors='coerce').fillna(9999)
+    df["_sort_lane"] = pd.to_numeric(df["Lane"], errors='coerce').fillna(9999)
+    
     if "Checked In" not in df.columns: df["Checked In"] = False
     if "Checked Out" not in df.columns: df["Checked Out"] = False
     df_with_variances = populate_variances(df)
@@ -722,7 +727,7 @@ if page_selection == VIEW_COACH:
             events = sorted(sess_df["Event"].unique(), key=get_event_num)
             
             for event in events:
-                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"]).copy()
+                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["_sort_heat", "_sort_lane"]).copy()
                 with st.expander(f"🏊 {event} ({len(event_df)} Swimmers)", expanded=True):
                     
                     analysis_col = []
@@ -928,7 +933,7 @@ elif page_selection == VIEW_TM:
 
             events = sorted(sess_df["Event"].unique(), key=get_event_num)
             for event in events:
-                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"])
+                event_df = sess_df[sess_df["Event"] == event].sort_values(by=["_sort_heat", "_sort_lane"])
                 display_cols = ["Heat", "Lane", "Swimmer", "Age", "Coach Time", "Seen Coach", "Marshalling Time", "In Marshalling", "Est. Race Time"]
                 first_row = event_df.iloc[0] if not event_df.empty else None
                 
