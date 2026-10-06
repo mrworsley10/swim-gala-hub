@@ -34,6 +34,40 @@ except Exception as e:
 # --- MODERN CUSTOM CSS ---
 st.markdown("""
 <style>
+    /* --- RADIO BUTTONS TO SLEEK APP BUTTONS --- */
+    /* Hide the default radio circle completely */
+    div[role="radiogroup"] label[data-baseweb="radio"] > div:first-child {
+        display: none !important;
+    }
+    /* Style the main label container to look like a clickable block */
+    div[role="radiogroup"] label[data-baseweb="radio"] {
+        background-color: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 12px 15px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        width: 100%;
+    }
+    /* Hover state for unselected buttons */
+    div[role="radiogroup"] label[data-baseweb="radio"]:hover {
+        background-color: #334155;
+        border-color: #facc15;
+    }
+    /* Active (Selected) State */
+    div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) {
+        background-color: #facc15 !important;
+        border-color: #facc15 !important;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+    }
+    /* Active Text Color */
+    div[role="radiogroup"] label[data-baseweb="radio"]:has(input:checked) p {
+        color: #0b0b0b !important;
+        font-weight: 800 !important;
+    }
+
+    /* --- EXISTING HEADER CSS --- */
     .modern-header {
         background-color: #0b0b0b;
         border-radius: 12px;
