@@ -712,13 +712,11 @@ if page_selection == VIEW_COACH:
                 event_df = sess_df[sess_df["Event"] == event].sort_values(by=["Heat", "Lane"]).copy()
                 with st.expander(f"🏊 {event} ({len(event_df)} Swimmers)", expanded=True):
                     
-                    disabled_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time"]
-                    county_col, reg_col, race_res_col = [], [], []
-                    
+                    analysis_col = []
                     has_targets = not st.session_state["target_df"].empty
                     target_df = st.session_state["target_df"]
 
-                    # Calculate dynamic target columns and Post-Race Analysis
+                    # Calculate compact dynamic analysis
                     for _, r in event_df.iterrows():
                         ach_sec = time_to_seconds(r['Achieved Time'])
                         ent_sec = time_to_seconds(r['Entry Time'])
@@ -735,38 +733,36 @@ if page_selection == VIEW_COACH:
                             
                             c_sec = time_to_seconds(c_time) if c_time else None
                             r_sec = time_to_seconds(r_time) if r_time else None
-                            
-                            c_ent_var = calculate_variance(ent_sec, c_sec) if ent_sec and c_sec else ""
-                            r_ent_var = calculate_variance(ent_sec, r_sec) if ent_sec and r_sec else ""
-                            
-                            county_col.append(f"{c_time} (Entry: {c_ent_var})" if c_ent_var and c_ent_var != "N/A" else f"{c_time}")
-                            reg_col.append(f"{r_time} (Entry: {r_ent_var})" if r_ent_var and r_ent_var != "N/A" else f"{r_time}")
-                            
+
                         if ach_sec is not None:
-                            ent_ach_var = calculate_variance(ach_sec, ent_sec) if ent_sec else ""
+                            # POST-RACE Breakdown
                             res = []
-                            if ent_ach_var and ent_ach_var != "N/A": res.append(f"Entry: {ent_ach_var}")
+                            ent_ach_var = calculate_variance(ach_sec, ent_sec) if ent_sec else ""
+                            if ent_ach_var and ent_ach_var != "N/A": res.append(f"PB: {ent_ach_var}")
                             
                             if has_targets:
                                 c_ach_var = calculate_variance(ach_sec, c_sec) if c_sec else ""
                                 r_ach_var = calculate_variance(ach_sec, r_sec) if r_sec else ""
-                                if c_ach_var and c_ach_var != "N/A": res.append(f"Cty: {c_ach_var}")
-                                if r_ach_var and r_ach_var != "N/A": res.append(f"Reg: {r_ach_var}")
+                                if c_ach_var and c_ach_var != "N/A": res.append(f"C: {c_ach_var}")
+                                if r_ach_var and r_ach_var != "N/A": res.append(f"R: {r_ach_var}")
                                 
-                            race_res_col.append(" | ".join(res) if res else "Race Logged")
+                            analysis_col.append(" | ".join(res) if res else "Logged")
                         else:
-                            race_res_col.append("⏳ Awaiting Race")
+                            # PRE-RACE Breakdown
+                            if has_targets:
+                                res = []
+                                c_ent_var = calculate_variance(ent_sec, c_sec) if ent_sec and c_sec else ""
+                                r_ent_var = calculate_variance(ent_sec, r_sec) if ent_sec and r_sec else ""
+                                if c_ent_var and c_ent_var != "N/A": res.append(f"C: {c_ent_var}")
+                                if r_ent_var and r_ent_var != "N/A": res.append(f"R: {r_ent_var}")
+                                analysis_col.append(" | ".join(res) if res else "No Targets")
+                            else:
+                                analysis_col.append("⏳ Awaiting")
 
-                    event_df["Post-Race Analysis"] = race_res_col
+                    event_df["Race Analysis"] = analysis_col
                     
-                    if has_targets:
-                        event_df["County Target"] = county_col
-                        event_df["Regional Target"] = reg_col
-                        display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "County Target", "Regional Target", "Achieved Time", "Post-Race Analysis", "Coach Notes"]
-                        disabled_cols.extend(["County Target", "Regional Target", "Post-Race Analysis"])
-                    else:
-                        display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Post-Race Analysis", "Coach Notes"]
-                        disabled_cols.append("Post-Race Analysis")
+                    display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Race Analysis", "Coach Notes"]
+                    disabled_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Race Analysis"]
 
                     editor_key = f"editor_coach_s{sess}_{event}_{st.session_state['redraw_counter']}"
                     
