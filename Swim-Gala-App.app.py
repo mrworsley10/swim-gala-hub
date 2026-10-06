@@ -15,6 +15,7 @@ from supabase import create_client, Client
 VIEW_COACH = "⏱ Coach Race Info"
 VIEW_WALL = "📋 Swimmer Wall Planner"
 VIEW_TM = "🚩 TM Marshalling Info"
+VIEW_PARENT = "👪 Parent Portal"
 
 # Streamlit Page Setup
 st.set_page_config(page_title="Swim Gala Hub", layout="wide")
@@ -139,6 +140,32 @@ st.markdown("""
     .kpi-val.red { color: #ef4444 !important; }
     .kpi-val.orange { color: #f97316 !important; }
     .kpi-label { font-size: 0.75em; color: gray !important; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+    
+    /* --- SCOREBOARD FEED --- */
+    .scoreboard-container {
+        background-color: #0b0b0b;
+        border: 2px solid #334155;
+        border-radius: 10px;
+        padding: 15px;
+        max-height: 550px;
+        overflow-y: auto;
+    }
+    .score-item {
+        background-color: #1e293b;
+        border-left: 5px solid #facc15;
+        padding: 12px 15px;
+        margin-bottom: 10px;
+        border-radius: 6px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .score-left { flex: 2; }
+    .score-right { flex: 1; text-align: right; }
+    .score-name { font-size: 1.1em; font-weight: bold; color: #fff; margin-bottom: 4px; }
+    .score-event { font-size: 0.85em; color: #94a3b8; }
+    .score-time { font-size: 1.4em; font-weight: 900; color: #4ade80; }
+    .score-var { font-size: 0.85em; color: #cbd5e1; margin-top: 4px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -158,12 +185,13 @@ if "last_url" not in st.session_state:
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM])
+page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM, VIEW_PARENT])
 
 # --- DYNAMIC APP HEADER ---
 if page_selection == VIEW_COACH: icon_title = "⏱ COACH"
 elif page_selection == VIEW_WALL: icon_title = "📋 PLANNER"
-else: icon_title = "🚩 TRACKER"
+elif page_selection == VIEW_TM: icon_title = "🚩 TRACKER"
+else: icon_title = "👪 PARENTS"
 
 sync_class = "sync-live" if st.session_state["room_pin"] else "sync-offline"
 sync_text = f"🟢 Room: {st.session_state['room_pin']}" if st.session_state["room_pin"] else "⚪ Offline"
@@ -286,7 +314,7 @@ st.sidebar.header("☁️ Live Cloud Sync")
 
 if st.session_state.get("room_pin"):
     st.sidebar.success(f"🟢 Connected to Room: **{st.session_state['room_pin']}**")
-    if st.sidebar.button("🔄 Refresh Data"):
+    if st.sidebar.button("🔄 Refresh Live Data"):
         with st.spinner("Syncing latest data..."):
             st.session_state["gala_df"] = fetch_room(st.session_state["room_pin"])
             st.session_state["target_df"] = fetch_room_targets(st.session_state["room_pin"])
@@ -298,40 +326,42 @@ if st.session_state.get("room_pin"):
         st.rerun()
         
     # --- ROOM-BOUND TARGET UPLOADER ---
-    st.sidebar.markdown("---")
-    with st.sidebar.expander("🎯 Room Target Times", expanded=False):
-        if not st.session_state["target_df"].empty:
-            st.success(f"{len(st.session_state['target_df'])} Targets Loaded.")
-        else:
-            st.info("No targets loaded for this room.")
-            
-        target_file = st.file_uploader("Upload Club/County Targets (CSV)", type=["csv"])
-        if target_file is not None:
-            if st.button("Link Targets to Room"):
-                with st.spinner("Uploading to room..."):
-                    try:
-                        upload_df = pd.read_csv(target_file)
-                        records = []
-                        for _, r in upload_df.iterrows():
-                            records.append({
-                                "room_pin": st.session_state["room_pin"],
-                                "gender": safe_str(r.get("Gender")),
-                                "age": safe_int(r.get("Age"), -1),
-                                "event": safe_str(r.get("Event")),
-                                "county_time": safe_str(r.get("County_Time")),
-                                "regional_time": safe_str(r.get("Regional_Time"))
-                            })
-                        
-                        # Clear old targets for this specific room, then insert new ones
-                        supabase.table("target_times").delete().eq("room_pin", st.session_state["room_pin"]).execute()
-                        for i in range(0, len(records), 100):
-                            supabase.table("target_times").insert(records[i:i+100]).execute()
-                        
-                        st.session_state["target_df"] = fetch_room_targets(st.session_state["room_pin"])
-                        st.success("Linked! All coaches in this room now see these targets.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Upload failed: {e}")
+    # Hide the Target uploader from the Parent View so they can't accidentally mess with it
+    if page_selection != VIEW_PARENT:
+        st.sidebar.markdown("---")
+        with st.sidebar.expander("🎯 Room Target Times", expanded=False):
+            if not st.session_state["target_df"].empty:
+                st.success(f"{len(st.session_state['target_df'])} Targets Loaded.")
+            else:
+                st.info("No targets loaded for this room.")
+                
+            target_file = st.file_uploader("Upload Club/County Targets (CSV)", type=["csv"])
+            if target_file is not None:
+                if st.button("Link Targets to Room"):
+                    with st.spinner("Uploading to room..."):
+                        try:
+                            upload_df = pd.read_csv(target_file)
+                            records = []
+                            for _, r in upload_df.iterrows():
+                                records.append({
+                                    "room_pin": st.session_state["room_pin"],
+                                    "gender": safe_str(r.get("Gender")),
+                                    "age": safe_int(r.get("Age"), -1),
+                                    "event": safe_str(r.get("Event")),
+                                    "county_time": safe_str(r.get("County_Time")),
+                                    "regional_time": safe_str(r.get("Regional_Time"))
+                                })
+                            
+                            # Clear old targets for this specific room, then insert new ones
+                            supabase.table("target_times").delete().eq("room_pin", st.session_state["room_pin"]).execute()
+                            for i in range(0, len(records), 100):
+                                supabase.table("target_times").insert(records[i:i+100]).execute()
+                            
+                            st.session_state["target_df"] = fetch_room_targets(st.session_state["room_pin"])
+                            st.success("Linked! All users in this room now see these targets.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Upload failed: {e}")
 
 else:
     st.sidebar.info("Sync across devices by creating or joining a room.")
@@ -348,7 +378,8 @@ else:
                 else:
                     st.sidebar.error("Invalid PIN or empty room.")
                     
-    if not st.session_state["gala_df"].empty and "id" not in st.session_state["gala_df"].columns:
+    # Only show the "Create Gala" features if not in the Parent View
+    if page_selection != VIEW_PARENT and not st.session_state["gala_df"].empty and "id" not in st.session_state["gala_df"].columns:
         if st.sidebar.button("☁️ Upload Gala to Cloud"):
             with st.spinner("Scrubbing data & creating secure room..."):
                 original_df = st.session_state["gala_df"].copy()
@@ -369,38 +400,46 @@ else:
                     st.session_state["gala_df"] = original_df
 
 # --- ADMIN SECURE WIPER ---
-st.sidebar.divider()
-with st.sidebar.expander("🔐 Admin Tools"):
-    admin_pin = st.text_input("Enter Admin PIN to unlock", type="password")
-    correct_pin = st.secrets.get("ADMIN_PIN", "9999") 
+if page_selection != VIEW_PARENT:
+    st.sidebar.divider()
+    with st.sidebar.expander("🔐 Admin Tools"):
+        admin_pin = st.text_input("Enter Admin PIN to unlock", type="password")
+        correct_pin = st.secrets.get("ADMIN_PIN", "9999") 
+        
+        if admin_pin == correct_pin:
+            st.success("Admin Access Granted")
+            if st.button("🚨 Wipe All Cloud Rooms"):
+                with st.spinner("Clearing entire database..."):
+                    try:
+                        # Wipe both the gala races and all linked target times
+                        supabase.table("live_gala_data").delete().gt("id", 0).execute()
+                        supabase.table("target_times").delete().gt("id", 0).execute()
+                        st.session_state["room_pin"] = None
+                        st.session_state["gala_df"] = pd.DataFrame()
+                        st.session_state["target_df"] = pd.DataFrame()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to clear database: {e}")
+        elif admin_pin:
+            st.error("Incorrect PIN")
+
+# --- CONFIGURATION & SETTINGS (Hidden from Parents) ---
+if page_selection != VIEW_PARENT:
+    st.sidebar.divider()
+    st.sidebar.header("⚙ Gala Schedule Settings")
+    session_start_map = {}
+    pace_factor = st.sidebar.slider("Heat Timing Speed Factor", 0.8, 1.3, 1.0, 0.05)
     
-    if admin_pin == correct_pin:
-        st.success("Admin Access Granted")
-        if st.button("🚨 Wipe All Cloud Rooms"):
-            with st.spinner("Clearing entire database..."):
-                try:
-                    # Wipe both the gala races and all linked target times
-                    supabase.table("live_gala_data").delete().gt("id", 0).execute()
-                    supabase.table("target_times").delete().gt("id", 0).execute()
-                    st.session_state["room_pin"] = None
-                    st.session_state["gala_df"] = pd.DataFrame()
-                    st.session_state["target_df"] = pd.DataFrame()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to clear database: {e}")
-    elif admin_pin:
-        st.error("Incorrect PIN")
-
-# --- CONFIGURATION & SETTINGS ---
-st.sidebar.divider()
-st.sidebar.header("⚙ Gala Schedule Settings")
-session_start_map = {}
-pace_factor = st.sidebar.slider("Heat Timing Speed Factor", 0.8, 1.3, 1.0, 0.05)
-
-st.sidebar.divider()
-st.sidebar.header("Load New Data Source")
-club_filter = st.sidebar.text_input("Club Keyword / Filter", placeholder="e.g. Warrington")
-input_method = st.sidebar.radio("Choose Input Method", ["Web Link (URL)", "Upload PDF File", "Paste Text / HTML"])
+    st.sidebar.divider()
+    st.sidebar.header("Load New Data Source")
+    club_filter = st.sidebar.text_input("Club Keyword / Filter", placeholder="e.g. Warrington")
+    input_method = st.sidebar.radio("Choose Input Method", ["Web Link (URL)", "Upload PDF File", "Paste Text / HTML"])
+else:
+    # Defaults for Parent View
+    session_start_map = {}
+    pace_factor = 1.0
+    club_filter = ""
+    input_method = "None"
 
 def fetch_url_content(url):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -636,69 +675,114 @@ def compute_gala_schedule_times(df_input, session_starts, pace):
             current_event_start_dt += timedelta(seconds=heat_duration_sec * max_heat)
     return calc_df
 
+def get_target_analysis(row, target_df, has_targets):
+    """Centralized logic for calculating Target +/- so Coach and Parent views match perfectly."""
+    ach_sec = time_to_seconds(row.get('Achieved Time'))
+    ent_sec = time_to_seconds(row.get('Entry Time'))
+    c_sec, r_sec = None, None
+    
+    if has_targets:
+        g = extract_gender(row.get('Event', ''))
+        a = safe_int(row.get('Age'), -1)
+        e = extract_standard_event(row.get('Event', ''))
+        match = target_df[(target_df['Gender'] == g) & (target_df['Age'] == a) & (target_df['Event'].str.lower() == e.lower())]
+        
+        c_time = match.iloc[0].get('County_Time', "") if not match.empty and pd.notna(match.iloc[0].get('County_Time')) else ""
+        r_time = match.iloc[0].get('Regional_Time', "") if not match.empty and pd.notna(match.iloc[0].get('Regional_Time')) else ""
+        
+        c_sec = time_to_seconds(c_time) if c_time else None
+        r_sec = time_to_seconds(r_time) if r_time else None
+
+    if ach_sec is not None:
+        # POST-RACE Breakdown
+        res = []
+        ent_ach_var = calculate_variance(ach_sec, ent_sec) if ent_sec else ""
+        if ent_ach_var and ent_ach_var != "N/A": res.append(f"PB: {ent_ach_var}")
+        
+        if has_targets:
+            c_ach_var = calculate_variance(ach_sec, c_sec) if c_sec else ""
+            r_ach_var = calculate_variance(ach_sec, r_sec) if r_sec else ""
+            if c_ach_var and c_ach_var != "N/A": res.append(f"C: {c_ach_var}")
+            if r_ach_var and r_ach_var != "N/A": res.append(f"R: {r_ach_var}")
+            
+        return " | ".join(res) if res else "Logged"
+    else:
+        # PRE-RACE Breakdown
+        if has_targets:
+            res = []
+            c_ent_var = calculate_variance(ent_sec, c_sec) if ent_sec and c_sec else ""
+            r_ent_var = calculate_variance(ent_sec, r_sec) if ent_sec and r_sec else ""
+            if c_ent_var and c_ent_var != "N/A": res.append(f"C: {c_ent_var}")
+            if r_ent_var and r_ent_var != "N/A": res.append(f"R: {r_ent_var}")
+            return " | ".join(res) if res else "No Targets"
+        else:
+            return "⏳ Awaiting"
+
+
 # --- DATA FETCHING ---
-parsed_entries = []
-if input_method == "Web Link (URL)":
-    url_input = st.sidebar.text_input("SPORTSYSTEMS Live URL", value=st.session_state["last_url"])
-    if url_input and st.sidebar.button("Fetch & Process Web Link"):
-        st.session_state["last_url"] = url_input
-        with st.spinner("Fetching and processing data..."):
-            try:
-                visited_urls = set()
-                pages_to_scrape = [url_input]
-                resp = fetch_url_content(url_input)
-                visited_urls.add(url_input)
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                meet_name = extract_meet_name_from_soup(soup)
-                if meet_name: st.session_state["meet_name"] = meet_name
-                for frame in soup.find_all(['frame', 'iframe']):
-                    if frame.get('src'): pages_to_scrape.append(urljoin(url_input, frame.get('src')))
-                sub_links = []
-                for p_url in list(pages_to_scrape):
-                    try:
-                        p_resp = fetch_url_content(p_url)
-                        visited_urls.add(p_url)
-                        p_soup = BeautifulSoup(p_resp.text, 'html.parser')
-                        parsed_entries.extend(parse_html_soup(p_soup, club_filter))
-                        for a in p_soup.find_all('a', href=True):
-                            full_url = urljoin(p_url, a['href'])
-                            if urlparse(full_url).netloc == urlparse(url_input).netloc and full_url not in visited_urls and a['href'].lower().endswith(('.htm', '.html')):
-                                sub_links.append(full_url)
-                                visited_urls.add(full_url)
-                    except: continue
-                for link in sub_links:
-                    try: parsed_entries.extend(parse_html_soup(BeautifulSoup(fetch_url_content(link).text, 'html.parser'), club_filter))
-                    except: continue
-                if parsed_entries:
+if page_selection != VIEW_PARENT:
+    parsed_entries = []
+    if input_method == "Web Link (URL)":
+        url_input = st.sidebar.text_input("SPORTSYSTEMS Live URL", value=st.session_state["last_url"])
+        if url_input and st.sidebar.button("Fetch & Process Web Link"):
+            st.session_state["last_url"] = url_input
+            with st.spinner("Fetching and processing data..."):
+                try:
+                    visited_urls = set()
+                    pages_to_scrape = [url_input]
+                    resp = fetch_url_content(url_input)
+                    visited_urls.add(url_input)
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                    meet_name = extract_meet_name_from_soup(soup)
+                    if meet_name: st.session_state["meet_name"] = meet_name
+                    for frame in soup.find_all(['frame', 'iframe']):
+                        if frame.get('src'): pages_to_scrape.append(urljoin(url_input, frame.get('src')))
+                    sub_links = []
+                    for p_url in list(pages_to_scrape):
+                        try:
+                            p_resp = fetch_url_content(p_url)
+                            visited_urls.add(p_url)
+                            p_soup = BeautifulSoup(p_resp.text, 'html.parser')
+                            parsed_entries.extend(parse_html_soup(p_soup, club_filter))
+                            for a in p_soup.find_all('a', href=True):
+                                full_url = urljoin(p_url, a['href'])
+                                if urlparse(full_url).netloc == urlparse(url_input).netloc and full_url not in visited_urls and a['href'].lower().endswith(('.htm', '.html')):
+                                    sub_links.append(full_url)
+                                    visited_urls.add(full_url)
+                        except: continue
+                    for link in sub_links:
+                        try: parsed_entries.extend(parse_html_soup(BeautifulSoup(fetch_url_content(link).text, 'html.parser'), club_filter))
+                        except: continue
+                    if parsed_entries:
+                        st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+                        st.session_state["room_pin"] = None
+                        st.rerun()
+                    else: st.sidebar.warning("No entries matching your Club Keyword were found.")
+                except Exception as e: st.error(f"Could not load web page: {e}")
+    
+    elif input_method == "Upload PDF File":
+        uploaded_file = st.sidebar.file_uploader("Upload Heat Sheet PDF", type=["pdf"])
+        if uploaded_file and st.sidebar.button("Process PDF"):
+            with st.spinner("Extracting data from PDF..."):
+                lines = []
+                with pdfplumber.open(uploaded_file) as pdf:
+                    for page in pdf.pages:
+                        if page.extract_text(): lines.extend(page.extract_text().split("\n"))
+                parsed_entries = parse_text_lines(lines, club_filter)
+                if parsed_entries: 
                     st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
                     st.session_state["room_pin"] = None
                     st.rerun()
-                else: st.sidebar.warning("No entries matching your Club Keyword were found.")
-            except Exception as e: st.error(f"Could not load web page: {e}")
-
-elif input_method == "Upload PDF File":
-    uploaded_file = st.sidebar.file_uploader("Upload Heat Sheet PDF", type=["pdf"])
-    if uploaded_file and st.sidebar.button("Process PDF"):
-        with st.spinner("Extracting data from PDF..."):
-            lines = []
-            with pdfplumber.open(uploaded_file) as pdf:
-                for page in pdf.pages:
-                    if page.extract_text(): lines.extend(page.extract_text().split("\n"))
-            parsed_entries = parse_text_lines(lines, club_filter)
-            if parsed_entries: 
-                st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                st.session_state["room_pin"] = None
-                st.rerun()
-
-elif input_method == "Paste Text / HTML":
-    pasted_text = st.sidebar.text_area("Paste webpage text directly here", height=200)
-    if pasted_text and st.sidebar.button("Process Text"):
-        with st.spinner("Processing pasted text..."):
-            parsed_entries = parse_text_lines(pasted_text.split("\n"), club_filter)
-            if parsed_entries: 
-                st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
-                st.session_state["room_pin"] = None
-                st.rerun()
+    
+    elif input_method == "Paste Text / HTML":
+        pasted_text = st.sidebar.text_area("Paste webpage text directly here", height=200)
+        if pasted_text and st.sidebar.button("Process Text"):
+            with st.spinner("Processing pasted text..."):
+                parsed_entries = parse_text_lines(pasted_text.split("\n"), club_filter)
+                if parsed_entries: 
+                    st.session_state["gala_df"] = pd.DataFrame(parsed_entries).drop_duplicates()
+                    st.session_state["room_pin"] = None
+                    st.rerun()
 
 # --- DATA COMPILATION ---
 df = st.session_state["gala_df"]
@@ -751,7 +835,6 @@ if page_selection == VIEW_COACH:
         sessions = sorted(df_final["Session"].unique())
         
         # --- UI COLUMN CONFIGURATION (COACH VIEW) ---
-        # Using TextColumn forces Streamlit to left-align the data instead of right-aligning pure numbers
         coach_col_config = {
             "Heat": st.column_config.TextColumn("Heat", width="small"),
             "Lane": st.column_config.TextColumn("Lane", width="small"),
@@ -771,61 +854,16 @@ if page_selection == VIEW_COACH:
             for event in events:
                 event_df = sess_df[sess_df["Event"] == event].sort_values(by=["_sort_heat", "_sort_lane"]).copy()
                 
-                # Convert numbers to strings before display so Streamlit left-aligns them automatically
                 event_df["Heat"] = event_df["Heat"].astype(str)
                 event_df["Lane"] = event_df["Lane"].astype(str)
                 event_df["Age"] = event_df["Age"].astype(str)
 
                 with st.expander(f"🏊 {event} ({len(event_df)} Swimmers)", expanded=True):
                     
-                    analysis_col = []
                     has_targets = not st.session_state["target_df"].empty
                     target_df = st.session_state["target_df"]
 
-                    # Calculate compact dynamic analysis
-                    for _, r in event_df.iterrows():
-                        ach_sec = time_to_seconds(r['Achieved Time'])
-                        ent_sec = time_to_seconds(r['Entry Time'])
-                        c_sec, r_sec = None, None
-                        
-                        if has_targets:
-                            g = extract_gender(r['Event'])
-                            a = safe_int(r['Age'], -1)
-                            e = extract_standard_event(r['Event'])
-                            match = target_df[(target_df['Gender'] == g) & (target_df['Age'] == a) & (target_df['Event'].str.lower() == e.lower())]
-                            
-                            c_time = match.iloc[0].get('County_Time', "") if not match.empty and pd.notna(match.iloc[0].get('County_Time')) else ""
-                            r_time = match.iloc[0].get('Regional_Time', "") if not match.empty and pd.notna(match.iloc[0].get('Regional_Time')) else ""
-                            
-                            c_sec = time_to_seconds(c_time) if c_time else None
-                            r_sec = time_to_seconds(r_time) if r_time else None
-
-                        if ach_sec is not None:
-                            # POST-RACE Breakdown
-                            res = []
-                            ent_ach_var = calculate_variance(ach_sec, ent_sec) if ent_sec else ""
-                            if ent_ach_var and ent_ach_var != "N/A": res.append(f"PB: {ent_ach_var}")
-                            
-                            if has_targets:
-                                c_ach_var = calculate_variance(ach_sec, c_sec) if c_sec else ""
-                                r_ach_var = calculate_variance(ach_sec, r_sec) if r_sec else ""
-                                if c_ach_var and c_ach_var != "N/A": res.append(f"C: {c_ach_var}")
-                                if r_ach_var and r_ach_var != "N/A": res.append(f"R: {r_ach_var}")
-                                
-                            analysis_col.append(" | ".join(res) if res else "Logged")
-                        else:
-                            # PRE-RACE Breakdown
-                            if has_targets:
-                                res = []
-                                c_ent_var = calculate_variance(ent_sec, c_sec) if ent_sec and c_sec else ""
-                                r_ent_var = calculate_variance(ent_sec, r_sec) if ent_sec and r_sec else ""
-                                if c_ent_var and c_ent_var != "N/A": res.append(f"C: {c_ent_var}")
-                                if r_ent_var and r_ent_var != "N/A": res.append(f"R: {r_ent_var}")
-                                analysis_col.append(" | ".join(res) if res else "No Targets")
-                            else:
-                                analysis_col.append("⏳ Awaiting")
-
-                    event_df["Target +/-"] = analysis_col
+                    event_df["Target +/-"] = [get_target_analysis(r, target_df, has_targets) for _, r in event_df.iterrows()]
                     
                     display_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Achieved Time", "Target +/-", "Coach Notes"]
                     disabled_cols = ["Heat", "Lane", "Swimmer", "Age", "Entry Time", "Target +/-"]
@@ -924,7 +962,6 @@ elif page_selection == VIEW_TM:
     st.markdown("Track swimmer movement split by **Session**. All swimmers in an event see **Coach** at event call time (-20 mins); **Marshalling** is calculated per individual **Heat** (-10 mins).")
     
     if not df_final.empty:
-        # --- UI COLUMN CONFIGURATION (TM VIEW) ---
         tm_rc_config = {
             "Swimmer": st.column_config.TextColumn("Swimmer", width="medium"),
             "Age": st.column_config.TextColumn("Age", width="small")
@@ -985,7 +1022,6 @@ elif page_selection == VIEW_TM:
             for event in events:
                 event_df = sess_df[sess_df["Event"] == event].sort_values(by=["_sort_heat", "_sort_lane"]).copy()
                 
-                # Convert numbers to strings to force left alignment
                 event_df["Heat"] = event_df["Heat"].astype(str)
                 event_df["Lane"] = event_df["Lane"].astype(str)
                 event_df["Age"] = event_df["Age"].astype(str)
@@ -1020,3 +1056,80 @@ elif page_selection == VIEW_TM:
                         st.session_state['redraw_counter'] += 1
                         st.rerun()
     else: st.info("👈 **Please load your gala meet data** from the sidebar first.")
+
+# --- VIEW 4: PARENT PORTAL ---
+elif page_selection == VIEW_PARENT:
+    if not df_final.empty:
+        has_targets = not st.session_state["target_df"].empty
+        target_df = st.session_state["target_df"]
+        
+        tab1, tab2 = st.tabs(["🔍 Individual Swimmer Search", "🏟️ Live Action Scoreboard"])
+        
+        # --- TAB 1: SWIMMER SEARCH ---
+        with tab1:
+            swimmer_list = sorted(df_final["Swimmer"].unique())
+            selected_swimmer = st.selectbox("Search for a Swimmer:", [""] + swimmer_list)
+            
+            if selected_swimmer:
+                swim_df = df_final[df_final["Swimmer"] == selected_swimmer].copy()
+                
+                # Apply the centralized Target calculation logic so it matches the Coach View perfectly
+                swim_df["Target +/-"] = swim_df.apply(lambda r: get_target_analysis(r, target_df, has_targets), axis=1)
+                
+                # Convert numbers to strings for clean left-alignment
+                swim_df["Heat"] = swim_df["Heat"].astype(str)
+                swim_df["Lane"] = swim_df["Lane"].astype(str)
+                
+                total_races = len(swim_df)
+                done_races = len(swim_df[swim_df["Achieved Time"] != ""])
+                
+                st.markdown(f"### 👤 Report Card: {selected_swimmer} <span style='font-size: 0.6em; color: gray;'>(Age: {swim_df.iloc[0]['Age']})</span>", unsafe_allow_html=True)
+                st.markdown(f"**Progress:** {done_races} / {total_races} Races Completed")
+                
+                display_cols = ["Session", "Event", "Heat", "Lane", "Entry Time", "Achieved Time", "Target +/-", "Coach Notes"]
+                
+                parent_col_config = {
+                    "Session": st.column_config.TextColumn("Sess", width="small"),
+                    "Heat": st.column_config.TextColumn("Heat", width="small"),
+                    "Lane": st.column_config.TextColumn("Lane", width="small"),
+                    "Event": st.column_config.TextColumn("Event", width="medium"),
+                    "Target +/-": st.column_config.TextColumn("Target +/-", width="large")
+                }
+                
+                st.dataframe(swim_df[display_cols], hide_index=True, use_container_width=True, column_config=parent_col_config)
+                
+        # --- TAB 2: LIVE SCOREBOARD FEED ---
+        with tab2:
+            st.markdown("### 🏟️ Latest Results Feed")
+            st.caption("Automatically sorts by the most recently scheduled events. Hit 'Refresh Live Data' in the sidebar to load the newest times.")
+            
+            results_df = df_final[df_final["Achieved Time"] != ""].copy()
+            
+            if results_df.empty:
+                st.info("No race times have been logged by the coaches yet. Check back soon!")
+            else:
+                # Sort descending by Session, then Event Number, then Heat so the latest races are always at the top of the feed
+                results_df["_evt_num"] = results_df["Event"].apply(get_event_num)
+                results_df = results_df.sort_values(by=["Session", "_evt_num", "_sort_heat", "_sort_lane"], ascending=[False, False, False, True])
+                
+                html_feed = '<div class="scoreboard-container">'
+                for _, r in results_df.iterrows():
+                    analysis_text = get_target_analysis(r, target_df, has_targets)
+                    html_feed += f'''
+                    <div class="score-item">
+                        <div class="score-left">
+                            <div class="score-name">{r["Swimmer"]} <span style="font-size:0.8em; font-weight:normal; color:#94a3b8;">(Age {r["Age"]})</span></div>
+                            <div class="score-event">Sess {r["Session"]} | {r["Event"]} | H{r["Heat"]} L{r["Lane"]}</div>
+                        </div>
+                        <div class="score-right">
+                            <div class="score-time">{r["Achieved Time"]}</div>
+                            <div class="score-var">{analysis_text}</div>
+                        </div>
+                    </div>
+                    '''
+                html_feed += '</div>'
+                
+                st.markdown(html_feed, unsafe_allow_html=True)
+                
+    else: 
+        st.info("👈 **Please ask your Team Manager for the 4-Digit Room PIN** and enter it in the sidebar to watch live results.")
