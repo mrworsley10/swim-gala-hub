@@ -389,7 +389,7 @@ def parse_text_lines(lines, club_keyword):
     return entries
 
 def parse_results_scraper(url, current_swimmers):
-    """Scrapes official results using explicit column header indexing and ignores split/heat files."""
+    """Scrapes official results using explicit column header indexing and includes HDW heat result files."""
     results_map = {}
     try:
         known_swimmers = {s.lower().strip() for s in current_swimmers}
@@ -413,13 +413,13 @@ def parse_results_scraper(url, current_swimmers):
                 for a in p_soup.find_all('a', href=True):
                     full_url = urljoin(p_url, a['href'])
                     href_lower = a['href'].lower()
-                    # Filter out split/heat/entry files to prevent overwriting results with split times
-                    if urlparse(full_url).netloc == urlparse(url).netloc and full_url not in visited_urls and href_lower.endswith(('.htm', '.html')) and not any(x in href_lower for x in ['split', 'heat', 'ent', 'entry']):
+                    # Allow heat/result files to process HDW events properly. Exclude split lists.
+                    if urlparse(full_url).netloc == urlparse(url).netloc and full_url not in visited_urls and href_lower.endswith(('.htm', '.html')) and 'split' not in href_lower and 'entry' not in href_lower and 'ent' not in href_lower:
                         sub_links.append(full_url)
                         visited_urls.add(full_url)
             except: continue
             
-        all_pages = [p for p in pages_to_scrape if not any(x in p.lower() for x in ['split', 'heat', 'ent', 'entry'])] + sub_links
+        all_pages = [p for p in pages_to_scrape if 'split' not in p.lower()] + sub_links
         
         for link in all_pages:
             try:
@@ -430,14 +430,17 @@ def parse_results_scraper(url, current_swimmers):
                     
                     place_idx, name_idx, time_idx = None, None, None
                     
-                    # Detect header positions dynamically
-                    for tr in rows[:3]:
+                    # Detect header positions dynamically by scanning the first few rows
+                    for tr in rows[:5]:
                         headers = [td.get_text(strip=True).lower() for td in tr.find_all(['td', 'th'])]
                         for idx, h in enumerate(headers):
                             if h in ['place', 'pos', 'pl']: place_idx = idx
                             elif h in ['name', 'swimmer']: name_idx = idx
                             elif h == 'time': time_idx = idx
+                        if name_idx is not None and time_idx is not None:
+                            break # Found the headers!
                             
+                    # Fallback if headers aren't explicitly found but table is wide enough
                     if name_idx is None: name_idx = 1
                     if place_idx is None: place_idx = 0
                     if time_idx is None: time_idx = 4
@@ -453,10 +456,9 @@ def parse_results_scraper(url, current_swimmers):
                                 clean_place = place_raw.replace('.', '').strip()
                                 name_title = name_raw.title()
                                 
-                                time_match = re.search(r'\d[\d\:\.]+', time_raw)
-                                final_time = time_match.group(0) if time_match else time_raw
-                                
-                                results_map[name_title] = {"place": clean_place, "time": final_time}
+                                # Because age group results are lower down the page, 
+                                # they will naturally overwrite earlier physical heat placements.
+                                results_map[name_title] = {"place": clean_place, "time": time_raw}
             except: continue
     except:
         pass
