@@ -19,6 +19,32 @@ VIEW_TM = "🚩 TM Marshalling Info"
 # Streamlit Page Setup
 st.set_page_config(page_title="Swim Gala Hub", layout="wide")
 
+import streamlit.components.v1 as components
+
+# --- WAKE LOCK: KEEP MOBILE SCREEN ON ---
+components.html("""
+<script>
+async function keepAwake() {
+    if ('wakeLock' in navigator) {
+        try {
+            const wakeLock = await navigator.wakeLock.request('screen');
+            console.log('Wake Lock active!');
+            
+            // Re-request if the user switches tabs and comes back
+            document.addEventListener('visibilitychange', async () => {
+                if (document.visibilityState === 'visible') {
+                    await navigator.wakeLock.request('screen');
+                }
+            });
+        } catch (err) {
+            console.error(`${err.name}, ${err.message}`);
+        }
+    }
+}
+keepAwake();
+</script>
+""", height=0, width=0)
+
 # --- SUPABASE CLOUD CONNECTION ---
 @st.cache_resource
 def init_supabase() -> Client:
