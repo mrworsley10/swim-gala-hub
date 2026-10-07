@@ -459,7 +459,7 @@ def get_target_analysis(row, target_df, has_targets):
 
 # --- SMART TM PLACEMENT SCRAPER ENGINE ---
 def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
-    """Scrapes official placements from Sportsystems using strict period matching."""
+    """Scrapes official placements dynamically by reading the 'Place' table headers."""
     if not gala_url or not room_pin: return 0, "Missing Gala URL or Room PIN."
     
     try:
@@ -468,6 +468,7 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
         resp = requests.get(gala_url, headers=headers, verify=False, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
+        # Grabs all event links (Heats, Finals, and Results pages)
         links = [urljoin(gala_url, a['href']) for a in soup.find_all('a', href=True) if 'event' in a['href'].lower() or re.match(r'^\d+\.htm', a['href'])]
         for f in soup.find_all(['frame', 'iframe']):
             if f.get('src'):
@@ -482,22 +483,45 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
         for link in set(links):
             try:
                 psoup = BeautifulSoup(requests.get(link, headers=headers, verify=False, timeout=4).text, 'html.parser')
-                hdr = psoup.find(['h1', 'h2', 'h3', 'h4'])
-                clean_evt = extract_standard_event(hdr.get_text(strip=True)) if hdr else ""
+                
+                clean_evt = ""
+                for el in psoup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'p', 'div', 'b', 'font']):
+                    text = el.get_text(strip=True)
+                    if re.search(r'Event\s+\d+', text, re.IGNORECASE):
+                        clean_evt = extract_standard_event(text)
+                        if clean_evt: break
+                
                 if not clean_evt: continue
 
-                for tr in psoup.find_all('tr'):
-                    row_text = tr.get_text(separator=" ", strip=True).lower()
-                    if target_club and target_club not in row_text: continue
+                place_idx = -1
+                name_idx = -1
 
+                for tr in psoup.find_all('tr'):
                     cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-                    if cells and len(cells) > 2:
-                        col0 = cells[0].strip()
-                        
-                        # THE CRITICAL FIX: Sportsystems results format their places with a dot (e.g. "1.", "2."). 
-                        # Start Lists (lanes) do NOT have dots (e.g. "1", "2").
-                        if col0.endswith('.') and col0[:-1].isdigit():
-                            place = int(col0[:-1])
+                    if not cells: continue
+
+                    row_text_lower = " ".join(cells).lower()
+
+                    # 1. Detect if this is a valid Results Table by finding the "Place" or "Pos" header
+                    if re.search(r'\b(place|pos|position)\b', row_text_lower):
+                        for i, c in enumerate(cells):
+                            cl = c.lower()
+                            if 'place' in cl or 'pos' in cl or 'position' in cl: place_idx = i
+                            if 'name' in cl or 'swimmer' in cl: name_idx = i
+                        if name_idx == -1: name_idx = 1 # Safe fallback
+                        continue
+
+                    # If we haven't found a "Place" header, skip entirely (naturally ignores Start Lists / Lanes)
+                    if place_idx == -1: continue
+                    if target_club and target_club not in row_text_lower: continue
+
+                    # 2. Extract the Place Number (Handles BOTH "1." and "1" flawlessly)
+                    if len(cells) > max(place_idx, name_idx):
+                        # Strips out any dots or spaces, leaving just the pure number
+                        place_str = re.sub(r'[^\d]', '', cells[place_idx])
+
+                        if place_str.isdigit():
+                            place = int(place_str)
                             
                             if place == 1: badge = "🥇 1st"
                             elif place == 2: badge = "🥈 2nd"
@@ -509,29 +533,23 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
                                 elif place % 10 == 3: badge = f"🏅 {place}rd"
                                 else: badge = f"🏅 {place}th"
 
-                            swimmer_name = ""
-                            for c in cells[1:]:
-                                if is_valid_swimmer_name(c):
-                                    swimmer_name = c.title()
-                                    break
-                            
-                            # Dual-name matching to ensure absolute accuracy
-                            if swimmer_name:
-                                parts = swimmer_name.split()
-                                if len(parts) >= 2:
-                                    first_name, last_name = parts[0], parts[-1]
-                                    supabase.table("live_gala_data").update({"official_placement": badge})\
-                                        .eq("room_pin", str(room_pin))\
-                                        .ilike("swimmer", f"%{first_name}%")\
-                                        .ilike("swimmer", f"%{last_name}%")\
-                                        .ilike("event", f"%{clean_evt}%")\
-                                        .execute()
-                                    updated_count += 1
+                            swimmer_name = cells[name_idx].title()
+
+                            if swimmer_name and len(swimmer_name.split()) >= 2:
+                                first_name = swimmer_name.split()[0]
+                                last_name = swimmer_name.split()[-1]
+                                
+                                supabase.table("live_gala_data").update({"official_placement": badge})\
+                                    .eq("room_pin", str(room_pin))\
+                                    .ilike("swimmer", f"%{first_name}%")\
+                                    .ilike("swimmer", f"%{last_name}%")\
+                                    .ilike("event", f"%{clean_evt}%")\
+                                    .execute()
+                                updated_count += 1
             except: continue
 
         return updated_count, None
     except Exception as e: return 0, str(e)
-
 
 parsed_entries = []
 if input_method == "Web Link (URL)":
