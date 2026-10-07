@@ -286,7 +286,7 @@ def extract_meet_name_from_soup(soup):
 def is_valid_swimmer_name(name):
     if not name or len(name) < 2: return False
     if not re.search(r'[a-zA-Z]', name): return False
-    blocked = {'name', 'swimmer', 'aad', 'lane', 'comp.no', 'comp no', 'comp', 'club', 'event', 'heat', 'entry', 'time'}
+    blocked = {'name', 'swimmer', 'aad', 'lane', 'comp.no', 'comp no', 'comp', 'club', 'event', 'heat', 'entry', 'time', 'place', 'pos'}
     if name.lower().strip() in blocked: return False
     return True
 
@@ -457,25 +457,18 @@ def get_target_analysis(row, target_df, has_targets):
             return " | ".join(res) if res else "No Targets"
         return "⏳ Awaiting"
 
-# --- TM PLACEMENT SCRAPER ENGINE ---
+# --- SMART TM PLACEMENT SCRAPER ENGINE ---
 def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
-    """Scrapes official placements from Sportsystems and saves to Supabase."""
-    if not gala_url or not room_pin:
-        return 0, "Missing Gala URL or Room PIN."
+    """Scrapes official placements from Sportsystems and strictly matches first & last names."""
+    if not gala_url or not room_pin: return 0, "Missing Gala URL or Room PIN."
     
     try:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-        }
-        
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         resp = requests.get(gala_url, headers=headers, verify=False, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        links = [urljoin(gala_url, a['href']) for a in soup.find_all('a', href=True) 
-                 if 'event' in a['href'].lower() or re.match(r'^\d+\.htm', a['href'])]
-        
+        links = [urljoin(gala_url, a['href']) for a in soup.find_all('a', href=True) if 'event' in a['href'].lower() or re.match(r'^\d+\.htm', a['href'])]
         for f in soup.find_all(['frame', 'iframe']):
             if f.get('src'):
                 try:
@@ -493,10 +486,15 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
                 clean_evt = extract_standard_event(hdr.get_text(strip=True)) if hdr else ""
                 if not clean_evt: continue
 
+                table_is_results = False
                 for tr in psoup.find_all('tr'):
-                    row_text = tr.get_text(separator=" ", strip=True)
-                    if target_club and target_club not in row_text.lower():
-                        continue
+                    row_text = tr.get_text(separator=" ", strip=True).lower()
+                    
+                    # GUARDRAIL 1: Identify if this is a Results Table or a Start List
+                    if "place " in row_text or "pos " in row_text: table_is_results = True; continue
+                    if "lane " in row_text and "place " not in row_text: table_is_results = False; continue
+                    if not table_is_results: continue # Skip completely if it's a lane assignment table
+                    if target_club and target_club not in row_text: continue
 
                     cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
                     if cells and cells[0].isdigit():
@@ -505,9 +503,12 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
                         if place == 1: badge = "🥇 1st"
                         elif place == 2: badge = "🥈 2nd"
                         elif place == 3: badge = "🥉 3rd"
-                        else: badge = f"🏅 {place}th" if place in [11, 12, 13] or place % 10 not in [1, 2, 3] else (
-                            f"🏅 {place}st" if place % 10 == 1 else (f"🏅 {place}nd" if place % 10 == 2 else f"🏅 {place}rd")
-                        )
+                        else:
+                            if place % 100 in [11, 12, 13]: badge = f"🏅 {place}th"
+                            elif place % 10 == 1: badge = f"🏅 {place}st"
+                            elif place % 10 == 2: badge = f"🏅 {place}nd"
+                            elif place % 10 == 3: badge = f"🏅 {place}rd"
+                            else: badge = f"🏅 {place}th"
 
                         swimmer_name = ""
                         for c in cells[1:]:
@@ -515,19 +516,22 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
                                 swimmer_name = c.title()
                                 break
                         
+                        # GUARDRAIL 2: Strict dual-name matching to prevent cross-contamination
                         if swimmer_name:
-                            last_name = swimmer_name.split()[-1]
-                            supabase.table("live_gala_data").update({"official_placement": badge})\
-                                .eq("room_pin", str(room_pin))\
-                                .ilike("swimmer", f"%{last_name}%")\
-                                .ilike("event", f"%{clean_evt}%")\
-                                .execute()
-                            updated_count += 1
+                            parts = swimmer_name.split()
+                            if len(parts) >= 2:
+                                first_name, last_name = parts[0], parts[-1]
+                                supabase.table("live_gala_data").update({"official_placement": badge})\
+                                    .eq("room_pin", str(room_pin))\
+                                    .ilike("swimmer", f"%{first_name}%")\
+                                    .ilike("swimmer", f"%{last_name}%")\
+                                    .ilike("event", f"%{clean_evt}%")\
+                                    .execute()
+                                updated_count += 1
             except: continue
 
         return updated_count, None
-    except Exception as e:
-        return 0, str(e)
+    except Exception as e: return 0, str(e)
 
 
 parsed_entries = []
