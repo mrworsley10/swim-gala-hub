@@ -7,7 +7,6 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from datetime import datetime, timedelta, time
-import io
 import urllib3
 import random
 from supabase import create_client, Client
@@ -17,7 +16,6 @@ VIEW_COACH = "⏱ Coach Race Info"
 VIEW_WALL = "📋 Swimmer Wall Planner"
 VIEW_TM = "🚩 TM Marshalling Info"
 
-# Streamlit Page Setup
 st.set_page_config(page_title="Swim Gala Hub", layout="wide")
 
 # --- WAKE LOCK: KEEP MOBILE SCREEN ON ---
@@ -82,7 +80,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize Session State Variables
 if "gala_df" not in st.session_state: st.session_state["gala_df"] = pd.DataFrame()
 if "target_df" not in st.session_state: st.session_state["target_df"] = pd.DataFrame()
 if "meet_name" not in st.session_state: st.session_state["meet_name"] = "Swim Gala Live"
@@ -93,10 +90,7 @@ if "last_url" not in st.session_state: st.session_state["last_url"] = ""
 st.sidebar.title("Navigation")
 page_selection = st.sidebar.radio("Select View", [VIEW_COACH, VIEW_WALL, VIEW_TM])
 
-if page_selection == VIEW_COACH: icon_title = "⏱ COACH"
-elif page_selection == VIEW_WALL: icon_title = "📋 PLANNER"
-else: icon_title = "🚩 TRACKER"
-
+icon_title = "⏱ COACH" if page_selection == VIEW_COACH else "📋 PLANNER" if page_selection == VIEW_WALL else "🚩 TRACKER"
 sync_class = "sync-live" if st.session_state["room_pin"] else "sync-offline"
 sync_text = f"🟢 Room: {st.session_state['room_pin']}" if st.session_state["room_pin"] else "⚪ Offline"
 
@@ -124,16 +118,11 @@ def safe_bool(val):
 
 def extract_gender(event_str):
     e_lower = str(event_str).lower()
-    if 'female' in e_lower or 'girl' in e_lower or 'women' in e_lower: return 'F'
-    if 'male' in e_lower or 'boy' in e_lower or 'men' in e_lower or 'open' in e_lower: return 'M'
-    return 'M'
+    return 'F' if 'female' in e_lower or 'girl' in e_lower or 'women' in e_lower else 'M'
 
 def extract_standard_event(event_str):
     m = re.search(r'(\d+m\s+[A-Za-z]+(?:\s+IM)?)', str(event_str), re.IGNORECASE)
-    if m:
-        stroke = m.group(1).title()
-        stroke = stroke.replace('Breaststroke', 'Breast').replace('Breaststrok', 'Breast').replace('Freestyle', 'Free').replace('Backstroke', 'Back').replace('Butterfly', 'Fly').replace('Ind. Medley', 'IM').replace('Ind Medley', 'IM').replace('M ', 'm ').replace(' Im', ' IM')
-        return stroke.strip()
+    if m: return m.group(1).title().replace('Breaststroke', 'Breast').replace('Breaststrok', 'Breast').replace('Freestyle', 'Free').replace('Backstroke', 'Back').replace('Butterfly', 'Fly').replace('Ind. Medley', 'IM').replace('Ind Medley', 'IM').replace('M ', 'm ').replace(' Im', ' IM').strip()
     return ""
 
 def create_room(df, gala_url=""):
@@ -155,7 +144,8 @@ def create_room(df, gala_url=""):
             "checked_in": safe_bool(row.get("Checked In")),
             "checked_out": safe_bool(row.get("Checked Out")),
             "seen_coach": safe_bool(row.get("Seen Coach")),
-            "in_marshalling": safe_bool(row.get("In Marshalling"))
+            "in_marshalling": safe_bool(row.get("In Marshalling")),
+            "official_placement": ""
         })
     try:
         batch_size = 100
@@ -170,8 +160,7 @@ def fetch_room(pin):
         response = supabase.table("live_gala_data").select("*").eq("room_pin", str(pin)).execute()
         data = response.data
         if not data: return pd.DataFrame()
-        df = pd.DataFrame(data)
-        return df.rename(columns={"session": "Session", "swimmer": "Swimmer", "age": "Age", "event": "Event", "heat": "Heat", "lane": "Lane", "entry_time": "Entry Time", "achieved_time": "Achieved Time", "coach_notes": "Coach Notes", "checked_in": "Checked In", "checked_out": "Checked Out", "seen_coach": "Seen Coach", "in_marshalling": "In Marshalling"})
+        return pd.DataFrame(data).rename(columns={"session": "Session", "swimmer": "Swimmer", "age": "Age", "event": "Event", "heat": "Heat", "lane": "Lane", "entry_time": "Entry Time", "achieved_time": "Achieved Time", "coach_notes": "Coach Notes", "checked_in": "Checked In", "checked_out": "Checked Out", "seen_coach": "Seen Coach", "in_marshalling": "In Marshalling", "official_placement": "Placement"})
     except Exception as e:
         st.error(f"Failed to pull from cloud: {e}")
         return pd.DataFrame()
@@ -179,9 +168,7 @@ def fetch_room(pin):
 def fetch_room_targets(pin):
     try:
         res = supabase.table("target_times").select("*").eq("room_pin", str(pin)).execute()
-        if res.data:
-            tdf = pd.DataFrame(res.data)
-            return tdf.rename(columns={"gender": "Gender", "age": "Age", "event": "Event", "county_time": "County_Time", "regional_time": "Regional_Time"})
+        if res.data: return pd.DataFrame(res.data).rename(columns={"gender": "Gender", "age": "Age", "event": "Event", "county_time": "County_Time", "regional_time": "Regional_Time"})
     except: pass
     return pd.DataFrame()
 
@@ -278,6 +265,7 @@ st.sidebar.header("Load Data Source")
 club_filter = st.sidebar.text_input("Club Keyword", placeholder="e.g. Warrington")
 input_method = st.sidebar.radio("Input Method", ["Web Link (URL)", "Upload PDF", "Paste Text"])
 
+# --- ROBUST FETCH FUNCTION ---
 def fetch_url_content(url):
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     headers = {
@@ -469,6 +457,79 @@ def get_target_analysis(row, target_df, has_targets):
             return " | ".join(res) if res else "No Targets"
         return "⏳ Awaiting"
 
+# --- TM PLACEMENT SCRAPER ENGINE ---
+def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
+    """Scrapes official placements from Sportsystems and saves to Supabase."""
+    if not gala_url or not room_pin:
+        return 0, "Missing Gala URL or Room PIN."
+    
+    try:
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }
+        
+        resp = requests.get(gala_url, headers=headers, verify=False, timeout=10)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        links = [urljoin(gala_url, a['href']) for a in soup.find_all('a', href=True) 
+                 if 'event' in a['href'].lower() or re.match(r'^\d+\.htm', a['href'])]
+        
+        for f in soup.find_all(['frame', 'iframe']):
+            if f.get('src'):
+                try:
+                    fsoup = BeautifulSoup(requests.get(urljoin(gala_url, f.get('src')), headers=headers, verify=False, timeout=5).text, 'html.parser')
+                    links.extend([urljoin(gala_url, a['href']) for a in fsoup.find_all('a', href=True)])
+                except: continue
+
+        updated_count = 0
+        target_club = club_keyword.strip().lower() if club_keyword else ""
+
+        for link in set(links):
+            try:
+                psoup = BeautifulSoup(requests.get(link, headers=headers, verify=False, timeout=4).text, 'html.parser')
+                hdr = psoup.find(['h1', 'h2', 'h3', 'h4'])
+                clean_evt = extract_standard_event(hdr.get_text(strip=True)) if hdr else ""
+                if not clean_evt: continue
+
+                for tr in psoup.find_all('tr'):
+                    row_text = tr.get_text(separator=" ", strip=True)
+                    if target_club and target_club not in row_text.lower():
+                        continue
+
+                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
+                    if cells and cells[0].isdigit():
+                        place = int(cells[0])
+                        
+                        if place == 1: badge = "🥇 1st"
+                        elif place == 2: badge = "🥈 2nd"
+                        elif place == 3: badge = "🥉 3rd"
+                        else: badge = f"🏅 {place}th" if place in [11, 12, 13] or place % 10 not in [1, 2, 3] else (
+                            f"🏅 {place}st" if place % 10 == 1 else (f"🏅 {place}nd" if place % 10 == 2 else f"🏅 {place}rd")
+                        )
+
+                        swimmer_name = ""
+                        for c in cells[1:]:
+                            if is_valid_swimmer_name(c):
+                                swimmer_name = c.title()
+                                break
+                        
+                        if swimmer_name:
+                            last_name = swimmer_name.split()[-1]
+                            supabase.table("live_gala_data").update({"official_placement": badge})\
+                                .eq("room_pin", str(room_pin))\
+                                .ilike("swimmer", f"%{last_name}%")\
+                                .ilike("event", f"%{clean_evt}%")\
+                                .execute()
+                            updated_count += 1
+            except: continue
+
+        return updated_count, None
+    except Exception as e:
+        return 0, str(e)
+
+
 parsed_entries = []
 if input_method == "Web Link (URL)":
     url_input = st.sidebar.text_input("SPORTSYSTEMS URL", value=st.session_state["last_url"])
@@ -600,6 +661,25 @@ elif page_selection == VIEW_WALL:
 
 elif page_selection == VIEW_TM:
     if not df_final.empty:
+        
+        # --- OFFICIAL PLACEMENTS SYNC BUTTON ---
+        st.markdown("### 🏅 Official Results Sync")
+        if st.button("🔄 Fetch & Publish Official Placements"):
+            if st.session_state.get("room_pin"):
+                room_url = st.session_state.get("last_url", "")
+                with st.spinner("Scraping official placements from Sportsystems..."):
+                    count, err = scrape_and_update_all_placements(st.session_state["room_pin"], room_url, club_filter)
+                    if err:
+                        st.error(f"Sync error: {err}")
+                    else:
+                        st.success(f"Successfully published placements for {count} races!")
+                        st.session_state["gala_df"] = fetch_room(st.session_state["room_pin"])
+                        st.rerun()
+            else:
+                st.warning("Please connect to a live room first.")
+        
+        st.divider()
+
         rc_cfg = {"Swimmer": st.column_config.TextColumn("Swimmer", width="medium"), "Age": st.column_config.TextColumn("Age", width="small")}
         ev_cfg = {"Heat": st.column_config.TextColumn("Heat", width="small"), "Lane": st.column_config.TextColumn("Lane", width="small"), "Swimmer": st.column_config.TextColumn("Swimmer", width="medium"), "Seen Coach": st.column_config.CheckboxColumn("Seen Coach?", width="small"), "In Marshalling": st.column_config.CheckboxColumn("In Marshalling?", width="small")}
         
