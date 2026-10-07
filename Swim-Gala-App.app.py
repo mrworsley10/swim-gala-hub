@@ -459,7 +459,7 @@ def get_target_analysis(row, target_df, has_targets):
 
 # --- SMART TM PLACEMENT SCRAPER ENGINE ---
 def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
-    """Scrapes official placements and matches them flawlessly using the Event Number."""
+    """Scrapes official placements and matches them flawlessly using both Event Numbers and Raw Stroke Text."""
     if not gala_url or not room_pin: return 0, "Missing Gala URL or Room PIN."
     
     try:
@@ -484,71 +484,86 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
             try:
                 psoup = BeautifulSoup(requests.get(link, headers=headers, verify=False, timeout=4).text, 'html.parser')
                 
-                # 1. Grab the exact Event Number (e.g., "101")
                 evt_num = ""
-                for text in psoup.stripped_strings:
-                    m = re.search(r'Event\s+(\d+)', text, re.IGNORECASE)
-                    if m:
-                        evt_num = m.group(1)
-                        break
+                raw_stroke = ""
+                is_results = False
                 
-                if not evt_num: continue
-
-                # 2. Extract Data using the exact same logic as the initial data load
-                place_idx = -1
-                name_idx = -1
-
-                for tr in psoup.find_all('tr'):
-                    cells = [td.get_text(separator=" ", strip=True) for td in tr.find_all(['td', 'th'])]
-                    if not cells: continue
-
-                    row_text_lower = " ".join(cells).lower()
-
-                    # Find "Place", "Pos", or "Rank" to confirm it's a Results table, not a Start List
-                    if re.search(r'\b(place|pos|position|rank)\b', row_text_lower):
-                        for i, c in enumerate(cells):
-                            cl = c.lower()
-                            if 'place' in cl or 'pos' in cl or 'position' in cl or 'rank' in cl: place_idx = i
-                            if 'name' in cl or 'swimmer' in cl: name_idx = i
-                        if name_idx == -1: name_idx = 1 # Safe fallback
-                        continue
-
-                    # Skip if we haven't hit the results headers yet, or if it's the wrong club
-                    if place_idx == -1: continue
-                    if target_club and target_club not in row_text_lower: continue
-
-                    # 3. Push to Database
-                    if len(cells) > max(place_idx, name_idx):
-                        place_str = re.sub(r'[^\d]', '', cells[place_idx])
-
-                        if place_str.isdigit():
-                            place = int(place_str)
+                # Scan page elements line by line to bypass messy HTML tables
+                for elem in psoup.find_all(['tr', 'pre', 'p', 'div', 'h1', 'h2', 'h3', 'h4']):
+                    rows = []
+                    if elem.name == 'tr':
+                        cells = [td.get_text(strip=True) for td in elem.find_all(['td', 'th'])]
+                        rows.append(" ".join(cells))
+                    else:
+                        for line in elem.get_text(separator='\n').split('\n'):
+                            rows.append(line)
                             
-                            # Create Medals/Badges
-                            if place == 1: badge = "🥇 1st"
-                            elif place == 2: badge = "🥈 2nd"
-                            elif place == 3: badge = "🥉 3rd"
-                            else:
-                                if place % 100 in [11, 12, 13]: badge = f"🏅 {place}th"
-                                elif place % 10 == 1: badge = f"🏅 {place}st"
-                                elif place % 10 == 2: badge = f"🏅 {place}nd"
-                                elif place % 10 == 3: badge = f"🏅 {place}rd"
-                                else: badge = f"🏅 {place}th"
-
-                            swimmer_name = cells[name_idx].title()
-
-                            if swimmer_name and len(swimmer_name.split()) >= 2:
-                                first_name = swimmer_name.split()[0]
-                                last_name = swimmer_name.split()[-1]
+                    for row_text in rows:
+                        row_text = row_text.strip()
+                        if not row_text: continue
+                        
+                        # 1. Dynamically track Event Number & Stroke as we scroll down
+                        m_evt = re.search(r'Event\s+(\d+)', row_text, re.IGNORECASE)
+                        if m_evt: evt_num = m_evt.group(1)
+                            
+                        m_stroke = re.search(r'(\d+m\s+[A-Za-z\.]+(?:\s+[A-Za-z]+)?)', row_text, re.IGNORECASE)
+                        if m_stroke: raw_stroke = m_stroke.group(1).strip()
+                            
+                        lower_text = row_text.lower()
+                        
+                        # 2. Find "Place", "Pos", or "Rank" to confirm it's a Results table, not a Start List
+                        if re.search(r'\b(place|pos|position|rank)\b', lower_text):
+                            is_results = True
+                            continue
+                        if re.search(r'\blane\b', lower_text) and not re.search(r'\b(place|pos|position|rank)\b', lower_text):
+                            is_results = False
+                            continue
+                            
+                        # 3. Match the Club and Extract Placements
+                        if is_results and (not target_club or target_club in lower_text):
+                            m = re.search(r'^\s*(\d+)\.?\s+(?:\d+\s+)?([A-Za-z\-\'\s]+?)\s+\d{1,2}\s+', row_text)
+                            if m:
+                                place = int(m.group(1))
+                                swimmer_name = m.group(2).strip()
                                 
-                                # Flawless match: First Name + Last Name + EXACT Event Number
-                                supabase.table("live_gala_data").update({"official_placement": badge})\
-                                    .eq("room_pin", str(room_pin))\
-                                    .ilike("swimmer", f"%{first_name}%")\
-                                    .ilike("swimmer", f"%{last_name}%")\
-                                    .ilike("event", f"Event {evt_num} %")\
-                                    .execute()
-                                updated_count += 1
+                                # Create Medals/Badges
+                                if place == 1: badge = "🥇 1st"
+                                elif place == 2: badge = "🥈 2nd"
+                                elif place == 3: badge = "🥉 3rd"
+                                else:
+                                    if place % 100 in [11, 12, 13]: badge = f"🏅 {place}th"
+                                    elif place % 10 == 1: badge = f"🏅 {place}st"
+                                    elif place % 10 == 2: badge = f"🏅 {place}nd"
+                                    elif place % 10 == 3: badge = f"🏅 {place}rd"
+                                    else: badge = f"🏅 {place}th"
+
+                                parts = swimmer_name.split()
+                                if len(parts) >= 2:
+                                    first_name, last_name = parts[0], parts[-1]
+                                    
+                                    # 4. Foolproof Database Sync
+                                    res = None
+                                    
+                                    # Attempt 1: Match by Exact Event Number
+                                    if evt_num:
+                                        res = supabase.table("live_gala_data").update({"official_placement": badge})\
+                                            .eq("room_pin", str(room_pin))\
+                                            .ilike("swimmer", f"%{first_name}%")\
+                                            .ilike("swimmer", f"%{last_name}%")\
+                                            .ilike("event", f"%Event {evt_num}%")\
+                                            .execute()
+                                            
+                                    # Attempt 2 (Fallback): Match by Exact Stroke String from the website (e.g. "200m Freestyle")
+                                    if raw_stroke and (not res or not res.data):
+                                        res = supabase.table("live_gala_data").update({"official_placement": badge})\
+                                            .eq("room_pin", str(room_pin))\
+                                            .ilike("swimmer", f"%{first_name}%")\
+                                            .ilike("swimmer", f"%{last_name}%")\
+                                            .ilike("event", f"%{raw_stroke}%")\
+                                            .execute()
+                                            
+                                    if res and res.data:
+                                        updated_count += 1
             except: continue
 
         return updated_count, None
