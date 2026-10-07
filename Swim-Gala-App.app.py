@@ -459,7 +459,7 @@ def get_target_analysis(row, target_df, has_targets):
 
 # --- SMART TM PLACEMENT SCRAPER ENGINE ---
 def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
-    """Scrapes official placements dynamically by reading the 'Place' table headers."""
+    """Scrapes official placements using a human-like text scanning engine to bypass messy HTML."""
     if not gala_url or not room_pin: return 0, "Missing Gala URL or Room PIN."
     
     try:
@@ -468,7 +468,7 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
         resp = requests.get(gala_url, headers=headers, verify=False, timeout=10)
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # Grabs all event links (Heats, Finals, and Results pages)
+        # Grab all event links (Heats, Finals, and Results pages)
         links = [urljoin(gala_url, a['href']) for a in soup.find_all('a', href=True) if 'event' in a['href'].lower() or re.match(r'^\d+\.htm', a['href'])]
         for f in soup.find_all(['frame', 'iframe']):
             if f.get('src'):
@@ -484,73 +484,75 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
             try:
                 psoup = BeautifulSoup(requests.get(link, headers=headers, verify=False, timeout=4).text, 'html.parser')
                 
+                # 1. Find the Event Title anywhere on the page
                 clean_evt = ""
-                for el in psoup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'p', 'div', 'b', 'font']):
-                    text = el.get_text(strip=True)
+                for text in psoup.stripped_strings:
                     if re.search(r'Event\s+\d+', text, re.IGNORECASE):
                         clean_evt = extract_standard_event(text)
                         if clean_evt: break
                 
                 if not clean_evt: continue
 
-                place_idx = -1
-                name_idx = -1
-
+                # 2. Extract every single line of text on the page, regardless of HTML structure
+                potential_rows = []
                 for tr in psoup.find_all('tr'):
-                    cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-                    if not cells: continue
-
-                    row_text_lower = " ".join(cells).lower()
-
-                    # 1. Detect if this is a valid Results Table by finding the "Place" or "Pos" header
-                    if re.search(r'\b(place|pos|position)\b', row_text_lower):
-                        for i, c in enumerate(cells):
-                            cl = c.lower()
-                            if 'place' in cl or 'pos' in cl or 'position' in cl: place_idx = i
-                            if 'name' in cl or 'swimmer' in cl: name_idx = i
-                        if name_idx == -1: name_idx = 1 # Safe fallback
+                    potential_rows.append(tr.get_text(separator=" ", strip=True))
+                for line in psoup.get_text('\n').split('\n'):
+                    potential_rows.append(line.strip())
+                
+                # 3. Read the text top-to-bottom like a human
+                seen = set()
+                is_results_section = False
+                
+                for row_text in potential_rows:
+                    if not row_text or row_text in seen: continue
+                    seen.add(row_text)
+                    row_lower = row_text.lower()
+                    
+                    # Turn ON if we see a Place/Pos header. Turn OFF if we see a Lane header.
+                    if re.search(r'\b(place|pos|position)\b', row_lower):
+                        is_results_section = True
                         continue
+                    if re.search(r'\blane\b', row_lower) and "place" not in row_lower:
+                        is_results_section = False
+                        continue
+                        
+                    if not is_results_section: continue
+                    if target_club and target_club not in row_lower: continue
+                    
+                    # Pattern Matcher: "1. Logan Dearden 10 Warrington" OR "1 123 Logan Dearden 10"
+                    m = re.search(r'^\s*(\d+)\.?\s+(?:\d+\s+)?([A-Za-z\-\'\s]+?)\s+\d{1,2}\s+', row_text)
+                    
+                    if m:
+                        place = int(m.group(1))
+                        swimmer_name = m.group(2).strip()
+                        
+                        if place == 1: badge = "🥇 1st"
+                        elif place == 2: badge = "🥈 2nd"
+                        elif place == 3: badge = "🥉 3rd"
+                        else:
+                            if place % 100 in [11, 12, 13]: badge = f"🏅 {place}th"
+                            elif place % 10 == 1: badge = f"🏅 {place}st"
+                            elif place % 10 == 2: badge = f"🏅 {place}nd"
+                            elif place % 10 == 3: badge = f"🏅 {place}rd"
+                            else: badge = f"🏅 {place}th"
 
-                    # If we haven't found a "Place" header, skip entirely (naturally ignores Start Lists / Lanes)
-                    if place_idx == -1: continue
-                    if target_club and target_club not in row_text_lower: continue
-
-                    # 2. Extract the Place Number (Handles BOTH "1." and "1" flawlessly)
-                    if len(cells) > max(place_idx, name_idx):
-                        # Strips out any dots or spaces, leaving just the pure number
-                        place_str = re.sub(r'[^\d]', '', cells[place_idx])
-
-                        if place_str.isdigit():
-                            place = int(place_str)
+                        # Ensure strict matching to the correct swimmer
+                        if swimmer_name and len(swimmer_name.split()) >= 2:
+                            first_name = swimmer_name.split()[0]
+                            last_name = swimmer_name.split()[-1]
                             
-                            if place == 1: badge = "🥇 1st"
-                            elif place == 2: badge = "🥈 2nd"
-                            elif place == 3: badge = "🥉 3rd"
-                            else:
-                                if place % 100 in [11, 12, 13]: badge = f"🏅 {place}th"
-                                elif place % 10 == 1: badge = f"🏅 {place}st"
-                                elif place % 10 == 2: badge = f"🏅 {place}nd"
-                                elif place % 10 == 3: badge = f"🏅 {place}rd"
-                                else: badge = f"🏅 {place}th"
-
-                            swimmer_name = cells[name_idx].title()
-
-                            if swimmer_name and len(swimmer_name.split()) >= 2:
-                                first_name = swimmer_name.split()[0]
-                                last_name = swimmer_name.split()[-1]
-                                
-                                supabase.table("live_gala_data").update({"official_placement": badge})\
-                                    .eq("room_pin", str(room_pin))\
-                                    .ilike("swimmer", f"%{first_name}%")\
-                                    .ilike("swimmer", f"%{last_name}%")\
-                                    .ilike("event", f"%{clean_evt}%")\
-                                    .execute()
-                                updated_count += 1
+                            supabase.table("live_gala_data").update({"official_placement": badge})\
+                                .eq("room_pin", str(room_pin))\
+                                .ilike("swimmer", f"%{first_name}%")\
+                                .ilike("swimmer", f"%{last_name}%")\
+                                .ilike("event", f"%{clean_evt}%")\
+                                .execute()
+                            updated_count += 1
             except: continue
 
         return updated_count, None
     except Exception as e: return 0, str(e)
-
 parsed_entries = []
 if input_method == "Web Link (URL)":
     url_input = st.sidebar.text_input("SPORTSYSTEMS URL", value=st.session_state["last_url"])
