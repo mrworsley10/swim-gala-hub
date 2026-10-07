@@ -459,7 +459,7 @@ def get_target_analysis(row, target_df, has_targets):
 
 # --- SMART TM PLACEMENT SCRAPER ENGINE ---
 def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
-    """Scrapes official placements from Sportsystems and strictly matches first & last names."""
+    """Scrapes official placements from Sportsystems using strict period matching."""
     if not gala_url or not room_pin: return 0, "Missing Gala URL or Room PIN."
     
     try:
@@ -486,48 +486,47 @@ def scrape_and_update_all_placements(room_pin, gala_url, club_keyword=""):
                 clean_evt = extract_standard_event(hdr.get_text(strip=True)) if hdr else ""
                 if not clean_evt: continue
 
-                table_is_results = False
                 for tr in psoup.find_all('tr'):
                     row_text = tr.get_text(separator=" ", strip=True).lower()
-                    
-                    # GUARDRAIL 1: Identify if this is a Results Table or a Start List
-                    if "place " in row_text or "pos " in row_text: table_is_results = True; continue
-                    if "lane " in row_text and "place " not in row_text: table_is_results = False; continue
-                    if not table_is_results: continue # Skip completely if it's a lane assignment table
                     if target_club and target_club not in row_text: continue
 
                     cells = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-                    if cells and cells[0].isdigit():
-                        place = int(cells[0])
+                    if cells and len(cells) > 2:
+                        col0 = cells[0].strip()
                         
-                        if place == 1: badge = "🥇 1st"
-                        elif place == 2: badge = "🥈 2nd"
-                        elif place == 3: badge = "🥉 3rd"
-                        else:
-                            if place % 100 in [11, 12, 13]: badge = f"🏅 {place}th"
-                            elif place % 10 == 1: badge = f"🏅 {place}st"
-                            elif place % 10 == 2: badge = f"🏅 {place}nd"
-                            elif place % 10 == 3: badge = f"🏅 {place}rd"
-                            else: badge = f"🏅 {place}th"
+                        # THE CRITICAL FIX: Sportsystems results format their places with a dot (e.g. "1.", "2."). 
+                        # Start Lists (lanes) do NOT have dots (e.g. "1", "2").
+                        if col0.endswith('.') and col0[:-1].isdigit():
+                            place = int(col0[:-1])
+                            
+                            if place == 1: badge = "🥇 1st"
+                            elif place == 2: badge = "🥈 2nd"
+                            elif place == 3: badge = "🥉 3rd"
+                            else:
+                                if place % 100 in [11, 12, 13]: badge = f"🏅 {place}th"
+                                elif place % 10 == 1: badge = f"🏅 {place}st"
+                                elif place % 10 == 2: badge = f"🏅 {place}nd"
+                                elif place % 10 == 3: badge = f"🏅 {place}rd"
+                                else: badge = f"🏅 {place}th"
 
-                        swimmer_name = ""
-                        for c in cells[1:]:
-                            if is_valid_swimmer_name(c):
-                                swimmer_name = c.title()
-                                break
-                        
-                        # GUARDRAIL 2: Strict dual-name matching to prevent cross-contamination
-                        if swimmer_name:
-                            parts = swimmer_name.split()
-                            if len(parts) >= 2:
-                                first_name, last_name = parts[0], parts[-1]
-                                supabase.table("live_gala_data").update({"official_placement": badge})\
-                                    .eq("room_pin", str(room_pin))\
-                                    .ilike("swimmer", f"%{first_name}%")\
-                                    .ilike("swimmer", f"%{last_name}%")\
-                                    .ilike("event", f"%{clean_evt}%")\
-                                    .execute()
-                                updated_count += 1
+                            swimmer_name = ""
+                            for c in cells[1:]:
+                                if is_valid_swimmer_name(c):
+                                    swimmer_name = c.title()
+                                    break
+                            
+                            # Dual-name matching to ensure absolute accuracy
+                            if swimmer_name:
+                                parts = swimmer_name.split()
+                                if len(parts) >= 2:
+                                    first_name, last_name = parts[0], parts[-1]
+                                    supabase.table("live_gala_data").update({"official_placement": badge})\
+                                        .eq("room_pin", str(room_pin))\
+                                        .ilike("swimmer", f"%{first_name}%")\
+                                        .ilike("swimmer", f"%{last_name}%")\
+                                        .ilike("event", f"%{clean_evt}%")\
+                                        .execute()
+                                    updated_count += 1
             except: continue
 
         return updated_count, None
@@ -675,6 +674,8 @@ elif page_selection == VIEW_TM:
                     count, err = scrape_and_update_all_placements(st.session_state["room_pin"], room_url, club_filter)
                     if err:
                         st.error(f"Sync error: {err}")
+                    elif count == 0:
+                        st.warning("No official medals were found yet. Check back when the club uploads results!")
                     else:
                         st.success(f"Successfully published placements for {count} races!")
                         st.session_state["gala_df"] = fetch_room(st.session_state["room_pin"])
