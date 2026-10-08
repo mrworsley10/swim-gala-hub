@@ -57,6 +57,7 @@ except Exception as e:
 # --- MODERN CUSTOM CSS ---
 st.markdown("""
 <style>
+    .block-container { padding-top: 1rem !important; padding-bottom: 1rem !important; }
     div[role="radiogroup"] label[data-baseweb="radio"] > div:first-child { display: none !important; }
     div[role="radiogroup"] label[data-baseweb="radio"] { background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 12px 15px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s ease; width: 100%; }
     div[role="radiogroup"] label[data-baseweb="radio"]:hover { background-color: #334155; border-color: #facc15; }
