@@ -125,8 +125,20 @@ def extract_standard_event(event_str):
     if m: return m.group(1).title().replace('Breaststroke', 'Breast').replace('Breaststrok', 'Breast').replace('Freestyle', 'Free').replace('Backstroke', 'Back').replace('Butterfly', 'Fly').replace('Ind. Medley', 'IM').replace('Ind Medley', 'IM').replace('M ', 'm ').replace(' Im', ' IM').strip()
     return ""
 
+def get_unique_pin():
+    try:
+        res = supabase.table("live_gala_data").select("room_pin").execute()
+        existing_pins = [row["room_pin"] for row in res.data] if res.data else []
+    except:
+        existing_pins = []
+        
+    while True:
+        new_pin = str(random.randint(10000, 99999))
+        if new_pin not in existing_pins:
+            return new_pin
+
 def create_room(df, gala_url=""):
-    pin = str(random.randint(1000, 9999))
+    pin = get_unique_pin()
     records = []
     for _, row in df.iterrows():
         records.append({
@@ -209,21 +221,11 @@ if st.session_state.get("room_pin"):
                     st.rerun()
                 except Exception as e: st.error(f"Upload failed: {e}")
 else:
-    st.sidebar.info("Sync across devices by creating or joining a room.")
-    join_pin = st.sidebar.text_input("Enter 4-Digit Room PIN")
-    if st.sidebar.button("Join Room") and join_pin:
-        with st.spinner("Joining..."):
-            new_df = fetch_room(join_pin)
-            if not new_df.empty:
-                st.session_state["gala_df"] = new_df
-                st.session_state["room_pin"] = join_pin
-                st.session_state["target_df"] = fetch_room_targets(join_pin)
-                st.rerun()
-            else: st.sidebar.error("Invalid PIN.")
-                    
+    st.sidebar.info("Sync across devices by creating a new room or rejoining an existing one.")
+    
     if not st.session_state["gala_df"].empty and "id" not in st.session_state["gala_df"].columns:
-        if st.sidebar.button("☁️ Upload Gala to Cloud"):
-            with st.spinner("Scrubbing data & creating secure room..."):
+        if st.sidebar.button("🎲 Generate New PIN & Upload Gala"):
+            with st.spinner("Securing unique room & uploading data..."):
                 original_df = st.session_state["gala_df"].copy()
                 pin, err = create_room(st.session_state["gala_df"], st.session_state.get("last_url", ""))
                 if pin:
@@ -239,6 +241,18 @@ else:
                 else:
                     st.sidebar.error(f"Upload Failed: {err}")
                     st.session_state["gala_df"] = original_df
+                    
+    st.sidebar.markdown("---")
+    join_pin = st.sidebar.text_input("Enter 5-Digit Room PIN to Rejoin:")
+    if st.sidebar.button("Join Room") and join_pin:
+        with st.spinner("Joining..."):
+            new_df = fetch_room(join_pin)
+            if not new_df.empty:
+                st.session_state["gala_df"] = new_df
+                st.session_state["room_pin"] = join_pin
+                st.session_state["target_df"] = fetch_room_targets(join_pin)
+                st.rerun()
+            else: st.sidebar.error("Invalid PIN.")
 
 st.sidebar.divider()
 with st.sidebar.expander("🔐 Owner Tools"):
