@@ -785,22 +785,48 @@ elif page_selection == VIEW_SUMMARY:
         s_done = len(df_final[(df_final["Achieved Time"] != "") & (~ach_u.str.contains("DNC|WD|WITHDRAWN|DQ")) & (~not_u.str.contains("DNC|WD|WITHDRAWN|DQ"))])
         s_rem = max(0, len(df_final) - s_done - dq - dnc)
         
-        # Calculate Target Achievements (County / Regional)
+        # PB Rate Calculation
+        pb_count = int(df_final["Var vs Entry"].str.startswith("✅").sum())
+        pb_rate = int((pb_count / s_done) * 100) if s_done > 0 else 0
+        
+        # Official Hardware Tally (From the Results Scraper)
+        placements = df_final.get("Placement", pd.Series(dtype=str)).fillna("")
+        gold = int((placements == "🥇 1st").sum())
+        silver = int((placements == "🥈 2nd").sum())
+        bronze = int((placements == "🥉 3rd").sum())
+        
+        # Calculate Target Achievements & Brand New Qualifiers
         county_achieved = 0
         regional_achieved = 0
+        new_qualifiers = []
         
         if not st.session_state["target_df"].empty:
             for _, r in df_final.iterrows():
                 ach_sec = time_to_seconds(r.get("Achieved Time"))
+                ent_sec = time_to_seconds(r.get("Entry Time"))
+                
                 if ach_sec is not None:
                     match = st.session_state["target_df"][(st.session_state["target_df"]['Gender'] == extract_gender(r.get('Event', ''))) & (st.session_state["target_df"]['Age'] == safe_int(r.get('Age'), -1)) & (st.session_state["target_df"]['Event'].str.lower() == extract_standard_event(r.get('Event', '')).lower())]
                     if not match.empty:
                         c_sec = time_to_seconds(match.iloc[0].get('County_Time', ""))
                         r_sec = time_to_seconds(match.iloc[0].get('Regional_Time', ""))
                         
-                        # Check if achieved time is faster (less) than or equal to the target time
-                        if c_sec and ach_sec <= c_sec: county_achieved += 1
-                        if r_sec and ach_sec <= r_sec: regional_achieved += 1
+                        swimmer_name = r.get("Swimmer", "Unknown")
+                        event_name = extract_standard_event(r.get("Event", "")) or r.get("Event", "")
+                        
+                        # County Checks
+                        if c_sec and ach_sec <= c_sec: 
+                            county_achieved += 1
+                            # Did they beat the target today for the first time?
+                            if ent_sec and ent_sec > c_sec:
+                                new_qualifiers.append(f"**{swimmer_name}** — {event_name} *(New County Time!)*")
+                                
+                        # Regional Checks
+                        if r_sec and ach_sec <= r_sec: 
+                            regional_achieved += 1
+                            # Did they beat the target today for the first time?
+                            if ent_sec and ent_sec > r_sec:
+                                new_qualifiers.append(f"**{swimmer_name}** — {event_name} *(New Regional Time!)*")
 
         st.markdown(f"""
         <div class="status-pill"><span class="status-dot">●</span> Live tracking active · {datetime.now().strftime("%H:%M")}</div>
@@ -808,7 +834,8 @@ elif page_selection == VIEW_SUMMARY:
         <h4 style="margin-top: 20px; color: #cbd5e1;">General Metrics</h4>
         <div class="kpi-container">
             <div class="kpi-card"><div class="kpi-val">{s_done}</div><div class="kpi-label">SWIMS DONE</div></div>
-            <div class="kpi-card"><div class="kpi-val green">{df_final["Var vs Entry"].str.startswith("✅").sum()}</div><div class="kpi-label">FASTER THAN ENTRY</div></div>
+            <div class="kpi-card"><div class="kpi-val green">{pb_count}</div><div class="kpi-label">FASTER THAN ENTRY</div></div>
+            <div class="kpi-card"><div class="kpi-val green">{pb_rate}%</div><div class="kpi-label">PB RATE</div></div>
             <div class="kpi-card"><div class="kpi-val red">{dq}</div><div class="kpi-label">DISQUALIFIED</div></div>
             <div class="kpi-card"><div class="kpi-val orange">{dnc}</div><div class="kpi-label">WITHDRAWN</div></div>
             <div class="kpi-card"><div class="kpi-val">{s_rem}</div><div class="kpi-label">SWIMS REMAINING</div></div>
@@ -819,7 +846,24 @@ elif page_selection == VIEW_SUMMARY:
             <div class="kpi-card" style="border-top-color: #3b82f6;"><div class="kpi-val" style="color: #3b82f6 !important;">{county_achieved}</div><div class="kpi-label">COUNTY QUALIFIERS</div></div>
             <div class="kpi-card" style="border-top-color: #8b5cf6;"><div class="kpi-val" style="color: #8b5cf6 !important;">{regional_achieved}</div><div class="kpi-label">REGIONAL QUALIFIERS</div></div>
         </div>
+        
+        <h4 style="margin-top: 10px; color: #cbd5e1;">🏅 Official Hardware</h4>
+        <div class="kpi-container">
+            <div class="kpi-card" style="border-top-color: #fbbf24;"><div class="kpi-val" style="color: #fbbf24 !important;">{gold}</div><div class="kpi-label">GOLD MEDALS</div></div>
+            <div class="kpi-card" style="border-top-color: #94a3b8;"><div class="kpi-val" style="color: #94a3b8 !important;">{silver}</div><div class="kpi-label">SILVER MEDALS</div></div>
+            <div class="kpi-card" style="border-top-color: #b45309;"><div class="kpi-val" style="color: #b45309 !important;">{bronze}</div><div class="kpi-label">BRONZE MEDALS</div></div>
+        </div>
         """, unsafe_allow_html=True)
+        
+        # --- BRAND NEW QUALIFIERS FEED ---
+        st.markdown("---")
+        st.markdown("### 🎉 Brand New Qualifiers")
+        if not new_qualifiers:
+            st.info("No brand new qualifiers yet... keep pushing!")
+        else:
+            # Display unique achievements so we don't spam the list if they edit the time
+            for nq in list(set(new_qualifiers)):
+                st.success(f"🚀 {nq}")
     else: 
         st.info("👈 Load data to begin.")
 
